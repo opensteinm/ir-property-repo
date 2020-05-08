@@ -4,6 +4,7 @@
 -- 21 136 for variables values
 -- see if verison changes.
 -- OF NOTE : possible issue in that the 21% premium calculatioin is auto used of the aggregate with out comparing between the two values. just simply uses the 21% based on sales dates vs CV reviews
+-- code comment change.
 /*
 Version changes:
 -----------------------------------------------------------------
