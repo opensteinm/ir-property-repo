@@ -1,0 +1,117 @@
+/*
+-- Notes: 
+	> snippet code requires a review - Jeremy McGowan ?
+	> Throwing through the review workflow as a "test", theres a Power BI report tab for the workflow in Teams as well.
+	> The below is the various code changes for the Option 7 interim solution
+*/
+-- **STEP ONE**: create the table - taken code from original esti left outer joins code.
+--iSSUES OF NOTE: 				
+--1. ETL/data mismatch issue: Pre generated table using seperate code based off Corelogic and LINZ tables only.
+--2. BL table mssing data: property_build_age_group needs to be derived for joining	
+
+-- 05/05/2020 Changed alias names to correclty reflect that this is only residential sales aggrengate reocrds not limited to brightline.	
+
+create table lab_property_project.pty_area_res_cl_sale_esti
+STORED AS PARQUET AS
+select
+      area_residentials_final.property_build_age_group
+    , area_residentials_final.property_residential_indicator
+    , area_residentials_final.property_land_zone_desc
+    , area_residentials_final.property_land_area_sml_cat
+    , area_residentials_final.Property_suburb
+    , area_residentials_final.property_town
+    , area_residentials_final.property_sales_year
+    , area_residentials_final.property_sales_median_res
+    , area_residentials_final.property_sales_averages_res 
+    , round(round(area_residentials_final.property_sales_averages_res + area_residentials_final.property_sales_median_res ,2)/2,2) as property_sales_overarching_avg_res
+        from 
+           (
+            select 
+                   area_residentials.property_build_age_group
+                ,  area_residentials.property_residential_indicator
+                ,  area_residentials.property_land_zone_desc
+                ,  area_residentials.property_land_area_sml_cat
+                ,  area_residentials.Property_suburb
+                ,  area_residentials.property_town
+                ,  area_residentials.property_sales_year
+                ,  appx_median( area_residentials.property_sales_value)  as property_sales_median_res
+                ,  avg( area_residentials.property_sales_value)  as property_sales_averages_res
+                	from 
+                	(
+                		select cls.qpid as property_qpid,
+                		pt.property_address, 
+                		pt.property_suburb, 
+                		pt.property_town,  
+                		pt.property_land_area_sml_cat,
+                		pt.property_land_zone_desc,
+                		pt.property_residential_indicator,
+                		pt.property_build_age_group, -- DIPPRP-118
+                		date_part('Year',cls.sale_date) as property_Sales_year,
+                		cls.sale_price_gross   as property_Sales_value
+                		from lab_fcp_raw_restricted_access.pty_cl_sale  cls
+                		
+                		-- This table is using records from Linz and CL - it essentially mimics the Brighline_fn table how ever tries to use external source data
+                		INNER JOIN lab_property_project.tmp_pty_l_cl_new_property pt -- pre-generated table * ETL issue here
+                		on pt.property_qpid = cls.qpid 
+                		
+                		WHERE  cls.sale_cv < 3500000  -- removes CV's that skew calculation averages/ medians
+                		AND pt.property_residential_indicator= 'Residential' -- logic already applied to column but needs and update
+						-- property_residential_indicator this will need to be removed if expanding data past residential and the indicator will be used in the group by 						
+                		AND cls.sale_type_code NOT IN ('M11','M12','M13','M21','M22','M23','M31','M32','M33','M43') -- MULTI SALES
+                		) as area_residentials
+                		
+        	where property_sales_value != 0 and property_sales_value is not null -- exclude properties with no sales values in the averages (the multiple instruments issue per sale might be an issue)
+        	AND property_sales_value < 3500000 -- excludes properties higher than 10mil that skew the averages these are mos tof the time buld land purchese for high value $$
+                	
+            --#####CATEGORIES#####
+            group by property_build_age_group, property_residential_indicator, property_land_zone_desc, property_land_area_sml_cat, Property_suburb, property_town, property_sales_year
+    ) as area_residentials_final
+
+/* **STEP TWO**: this values will be added as a new column in the PD query [property_build_age_group]
+-- might want diffrent values for the grouping however ill need to regenerate the values in tmp_pty_l_cl_new_property
+, case    when pty.building_age >= 1800 and pty.building_age <=1900 then 'old'
+		  when pty.building_age > 1900 and pty.building_age <=2000 then 'new'
+		  when pty.building_age > 2000  then 'very new'
+		  when pty.building_age < 1800 and pty.building_age >0 then 'very old' else 'unknown' 
+end as property_build_age_group
+
+*/
+
+/* **STEP THREE**: this values will be added as a new column in the PD query [property_land_area_sml_cat]
+-- might want diffrent values for the grouping however ill need to regenerate the values in tmp_pty_l_cl_new_property
+, case when pty.land_area <= 0.0200 then '200 m2 and below'
+	when pty.land_area > 0.0200 and pty.land_area <= 0.0500  then 'between 200m2 and 500m2 hectares'
+	when pty.land_area > 0.0500 and pty.land_area <= 0.0800  then 'between 500m2 and 800m2 hectares'
+	else 'Above 800m2' 
+  end as property_land_area_sml_cat 
+
+*/
+
+-- **STEP FOUR**: left outer join the new table to get the inferred area value to join on the connections below.
+/*
+LEFT OUTER JOIN  pty_area_res_cl_sale_esti asesti
+	ON brightline_base_fn.Property_suburb = asesti.Property_suburb
+	AND brightline_base_fn.property_town = asesti.property_town
+	AND brightline_base_fn.property_land_area_sml_cat = asesti.property_land_area_sml_cat
+	AND brightline_base_fn.property_land_zone_desc = asesti.property_land_zone_desc
+	AND brightline_base_fn.sales_year = asesti.sales_year
+	AND brightline_base_fn.property_residential_indicator = asesti.property_residential_indicator
+	AND brightline_base_fn.property_build_age_group = asesti.property_build_age_group
+*/
+
+				
+/*
+-- **STEP FIVE**: new case statement wrapped around the price values
+
+case when sale_price is NULL then asesti.property_sales_overarching_avg_res else sale_price  end as sale_price 
+
+-- **STEP SIX**: flag to determine if the estimate value was used - (FOR DASHBOARD)
+
+case 	when sale_price is NOT NULL then 'N' 
+		when sale_price is NULL AND asesti.property_sales_overarching_avg_res IS NOT NULL then 'Y' 
+else 'X' as Inferred_value_indicator 
+
+-- X for unknown as there was not inffered estimate value to use
+
+*/
+-
