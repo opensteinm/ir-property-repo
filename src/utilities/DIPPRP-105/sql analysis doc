@@ -1,0 +1,458 @@
+
+select count(*) from tmp_pty_dipprp105_test_1 where sales_value =0 --54943
+
+select count(*) from brightline_base_fn --104300
+
+select count(*) from tmp_pty_dipprp105_test_1 --54843
+
+select count(*) from tmp_pty_dipprp105_test_1 where settlement_date is null --18949
+
+select count(*) from brightline_base_fn where sale_price =0 --923
+
+select count(*) from brightline_base_fn where sale_price is null -- 46629
+
+select count(*) from brightline_base_fn where sale_date is null -- 47826
+
+
+--1
+select 'zero values'as type, 'brightline_base_fn (blc)' as source,count(*) as totals from brightline_base_fn where sale_price =0 --923
+UNION all
+select 'NULL values','brightline_base_fn (blc)',count(*)  from brightline_base_fn where sale_price is null -- 46629
+UNION all
+select 'sales values','brightline_base_fn (blc)',count(*)  from brightline_base_fn where sale_price is not null and sale_price >0 -- 46629 
+union all
+select 'zero values'as type, 'tmp_pty_dipprp105_test_1 (esti)' as source,count(*) as totals from tmp_pty_dipprp105_test_1 where sales_value =0 --923
+UNION all
+select 'NULL values','tmp_pty_dipprp105_test_1 (esti)',count(*)  from tmp_pty_dipprp105_test_1 where sales_value is null -- 46629
+UNION all
+select 'sales values','tmp_pty_dipprp105_test_1 (esti)',count(*)  from tmp_pty_dipprp105_test_1 where sales_value is not null and sales_value >0 -- 46629 
+
+
+select count(*) from brightline_base_fn where sale_settlement_date is null -- 0
+
+-- give me all the records in the blc table that dont exist in the esti table 
+-- this implies all record sin blc that have a 0 sales value are in the esti table
+select  count(*)  from lab_property_project.brightline_base_fn blc 
+WHERE NOT EXISTS
+    (SELECT esti.property_title_no FROM lab_property_project.tmp_pty_dipprp105_test_1 esti 
+    WHERE blc.title_no = esti.property_title_no ) --0
+    and blc.sale_price=0    
+
+	
+-- give me all the records in the esti table that dont exist in the blc table 
+-- where the blc table is limited to 0 sales value
+-- 1006 difference (100 records are in both tables.)
+select count(*)  from lab_property_project.tmp_pty_dipprp105_test_1 esti 
+WHERE NOT EXISTS
+    (SELECT blc.title_no FROM lab_property_project.brightline_base_fn blc 
+    WHERE blc.title_no = esti.property_title_no and blc.sale_price=0 ) --53937
+    
+-- give me all the records in the blc table that dont exist in the esti table     
+select  count(*) from lab_property_project.brightline_base_fn blc   
+WHERE NOT EXISTS
+    (SELECT esti.property_title_no FROM lab_property_project.tmp_pty_dipprp105_test_1 esti 
+    WHERE blc.title_no = esti.property_title_no ) --43608
+    and blc.sale_price is null
+	
+select count(*)  from lab_property_project.tmp_pty_dipprp105_test_1 esti 
+WHERE NOT EXISTS
+    (SELECT blc.title_no FROM lab_property_project.brightline_base_fn blc 
+    WHERE blc.title_no = esti.property_title_no and blc.sale_price  is null) --52279
+	
+	select count(*) from tmp_pty_dipprp105_test_1 where settlement_date is null
+
+select count(*) from brightline_base_fn where sale_settlement_date is null
+	
+    select  count(*)  from brightline_base_fn where sale_price is not null and sale_price >0 and sale_date is null
+
+	
+	select count(*) from(
+select property_title_no, 
+datediff(settlement_date,sales_date) diff,
+settlement_date,sales_date from tmp_pty_dipprp105_test_1
+) as count_ where diff>30 -- 16 524
+
+
+
+
+-- these qeuries give us the total of records in esti that are not in blc
+
+select count(*)  from lab_property_project.tmp_pty_dipprp105_test_1 esti 
+WHERE esti.property_title_no not in   (
+                                SELECT blc.title_no FROM lab_property_project.brightline_base_fn blc 
+                                WHERE blc.sale_price is null OR blc.sale_price =0
+                            ) 
+ 
+select  property_title_no from lab_property_project.tmp_pty_dipprp105_test_1 esti 
+WHERE esti.property_title_no not in   (
+                                SELECT blc.title_no FROM lab_property_project.brightline_base_fn blc 
+                                WHERE blc.sale_price is null OR blc.sale_price =0
+                            ) 
+  
+ select * FROM lab_property_project.brightline_base_fn blc where  blc.title_no in (
+ 'SA18D/450',
+ 'NA22C/76',
+ 'NA1B/572')
+ 
+ 
+ -- these qeuries give us the total of records in blc that are not in esti
+ 
+  select  count(*) from  lab_property_project.brightline_base_fn blc 
+WHERE blc.sale_price=0 and
+blc.title_no not in   (
+                                SELECT  esti.property_title_no FROM lab_property_project.tmp_pty_dipprp105_test_1 esti  
+                      ) 
+OR
+blc.sale_price is null and
+blc.title_no not in   (
+                                SELECT  esti.property_title_no FROM lab_property_project.tmp_pty_dipprp105_test_1 esti  
+                            ) 
+							
+          
+		  
+		  
+select  blc.title_no from  lab_property_project.brightline_base_fn blc 
+WHERE blc.title_no not in   (
+                                SELECT  esti property_title_no FROM lab_property_project.tmp_pty_dipprp105_test_1 esti  
+                            ) 
+                            
+                            
+							
+  
+ select * FROM lab_property_project.brightline_base_fn blc where  blc.title_no in (
+'SA19B/1034', 'NA104C/713' )
+ 
+ select  * from lab_property_project.tmp_pty_dipprp105_test_1 esti  where esti.property_title_no
+ in (
+'SA19B/1034', 'NA104C/713' )	
+select * from  cp_pty_cl_sale  where qpid in (
+select qpid from cp_pty_cl_property_match where ct in ('SA19B/1034', 'NA104C/713' ) and match_quality=2)
+
+
+
+-- will show that sales that matchin both systems dont have the same sales values
+ select  blc.title_no, esti.sales_date, blc.sale_date, blc.sale_price,esti.sales_value from  lab_property_project.brightline_base_fn blc 
+ 
+inner join lab_property_project.tmp_pty_dipprp105_test_1 esti on blc.title_no  = esti.property_title_no and blc.sale_price=0  and esti.sales_date=blc.sale_date
+or blc.sale_price is null and blc.title_no  = esti.property_title_no and blc.sale_price=0 and esti.sales_date=blc.sale_date
+
+WHERE
+blc.sale_price=0 and
+blc.title_no  in   (
+                                SELECT  esti.property_title_no FROM lab_property_project.tmp_pty_dipprp105_test_1 esti 
+                                where  settlement_date > cast( '2015-09-30 00:00:00' as timestamp)
+                            ) 
+OR
+blc.sale_price is null and
+blc.title_no  in   (
+                                SELECT  esti.property_title_no FROM lab_property_project.tmp_pty_dipprp105_test_1 esti  
+                                where  settlement_date > cast( '2015-09-30 00:00:00' as timestamp)
+                            )  
+							
+							
+							
+							
+-- i can infer a esti value for 900 records joining on title and sale date exactly
+
+select  blc.title_no, esti.sales_date, blc.sale_date, blc.sale_price,esti.sales_value,esti.final_estimation_data from  lab_property_project.brightline_base_fn blc 
+inner join lab_property_project.tmp_pty_dipprp105_test_1 esti on blc.title_no  = esti.property_title_no and  esti.sales_date=blc.sale_date
+
+WHERE blc.sale_price =0 and
+blc.title_no  in   
+				(
+					SELECT  esti.property_title_no FROM lab_property_project.tmp_pty_dipprp105_test_1 esti 
+					where  settlement_date > cast( '2015-09-30 00:00:00' as timestamp)
+				) 
+				
+				
+				
+				
+				
+---JOIN LOGIC FOR ESTI AND BLC
+--join 1 gives you 882 joins - join using the [[sales date]] between the data
+
+select count(*) from (
+select  blc.title_no, esti.sales_date, blc.sale_date, blc.sale_price,esti.sales_value,esti.final_estimation_data from  lab_property_project.brightline_base_fn blc 
+inner join lab_property_project.tmp_pty_dipprp105_test_1 esti on
+blc.title_no  = esti.property_title_no and esti.sales_date=blc.sale_date 
+and esti.property_transmission_sale_ind <> 'Y' -- this doesn't matter cause blc wont have transmission records anyway
+WHERE blc.sale_price=0 
+) as cnt
+
+				
+--join 2 - gives you 25  joins - join using the [[settlement date]] between the data 
+select  blc.title_no, esti.sales_date, blc.sale_date,esti.settlement_date, blc.sale_price,esti.sales_value,esti.final_estimation_data from  lab_property_project.brightline_base_fn blc 
+inner join lab_property_project.tmp_pty_dipprp105_test_1 esti on blc.title_no  = esti.property_title_no  
+and esti.property_transmission_sale_ind <> 'Y' -- this doesn't matter cause blc wont have transmission records anyway
+and esti.settlement_Date=cast(to_date(blc.sale_settlement_date) as timestamp)
+and   esti.sales_date <> blc.sale_date
+WHERE blc.sale_price=0 
+			
+			
+			
+--join 3 - gives you 392  joins - join using the [[sale and settlement dates]] with a difference of 30days + or -
+
+--650 @ 60 days, 392 @ 30 days, 1279 @ 256 days, 793 @ 90 days
+select count(*) from (
+select  blc.title_no
+    ,   esti.sales_date
+    ,   blc.sale_date
+    ,   esti.settlement_date
+    ,   cast(to_date(blc.sale_settlement_date) as timestamp)
+    ,   datediff(cast(to_date(blc.sale_settlement_date) as timestamp),esti.sales_date)
+    ,   blc.sale_price,esti.sales_value
+    ,   esti.final_estimation_data 
+from  lab_property_project.brightline_base_fn blc 
+inner join lab_property_project.tmp_pty_dipprp105_test_1 esti  
+on  blc.title_no  = esti.property_title_no 
+ and esti.property_transmission_sale_ind <> 'Y'-- this doesn't matter cause blc wont have transmission records anyway
+--30days limit between the two dates for a join
+and  datediff(cast(to_date(blc.sale_settlement_date) as timestamp),esti.sales_date) <=90
+and datediff(cast(to_date(blc.sale_settlement_date) as timestamp),esti.sales_date)>=0
+WHERE blc.sale_price is null and blc.sale_date is null) as cnt 
+
+
+
+
+--join 4 (experimental just using titles and assuming 0 vaue in esti will match to the null value in blc, this 
+--however i know would be an issue because of sales where the property_title_no was sold many times with no values)
+-- this join illustrates the wider issue in that the reocrds in BLC just simply on a title
+--bases don't match the CL 0 values records.
+select count(*) from (--3337 joins however with the extra join 1 2 3 filters goes down to 2648
+select  blc.title_no
+    ,   esti.sales_date
+    ,   blc.sale_date
+    ,   esti.settlement_date
+    ,   cast(to_date(blc.sale_settlement_date) as timestamp)
+    ,   datediff(cast(to_date(blc.sale_settlement_date) as timestamp),esti.sales_date)
+    ,   blc.sale_price,esti.sales_value
+    ,   esti.final_estimation_data 
+from  lab_property_project.brightline_base_fn blc 
+inner join lab_property_project.tmp_pty_dipprp105_test_1 esti  
+on  blc.title_no  = esti.property_title_no 
+and esti.property_transmission_sale_ind <> 'Y'
+WHERE blc.sale_price is null 
+--) as cnt0
+
+and blc.title_no not in ( --this is join 1 titles
+                            select  blc.title_no from  lab_property_project.brightline_base_fn blc 
+                            inner join lab_property_project.tmp_pty_dipprp105_test_1 esti on blc.title_no  = esti.property_title_no 
+							and  esti.sales_date=blc.sale_date
+							and esti.property_transmission_sale_ind <> 'Y'-- this doesn't matter cause blc wont have transmission records anyway
+                            WHERE blc.sale_price=0 
+                        )
+and blc.title_no not in ( --this is join 2 titles
+                            select  blc.title_no from  lab_property_project.brightline_base_fn blc 
+                            inner join lab_property_project.tmp_pty_dipprp105_test_1 esti on blc.title_no  = esti.property_title_no 
+                            and esti.settlement_Date=cast(to_date(blc.sale_settlement_date) as timestamp)
+                            and   esti.sales_date <> blc.sale_date
+							and esti.property_transmission_sale_ind <> 'Y'-- this doesn't matter cause blc wont have transmission records anyway
+                            WHERE blc.sale_price=0 
+                        )
+and blc.title_no not in ( --this is join 3 titles
+                            select  blc.title_no
+                            from  lab_property_project.brightline_base_fn blc 
+                            inner join lab_property_project.tmp_pty_dipprp105_test_1 esti  
+                            on  blc.title_no  = esti.property_title_no 
+                            --30days limit between the two dates for a join
+                            and  datediff(cast(to_date(blc.sale_settlement_date) as timestamp),esti.sales_date) <=30
+                            and datediff(cast(to_date(blc.sale_settlement_date) as timestamp),esti.sales_date)>=0
+							and esti.property_transmission_sale_ind <> 'Y'-- this doesn't matter cause blc wont have transmission records anyway
+                            WHERE blc.sale_price is null and blc.sale_date is null
+                        )
+) as cnt
+
+
+--looking for 28K joins minimum from 2015 to better align with BL data
+select sum(tot) from (
+select date_part('YEAR',sales_date) years1, count(*) tot,'ESTI' from tmp_pty_dipprp105_test_1 
+ group by date_part('YEAR',sales_date)) as aa  where years1 >=2015
+
+
+ 
+ --#################################################
+ 
+ 
+ 
+ 
+ --for issue 3 analysis
+ select case when blc_join_check_grouping is null then 'no settlement date available in corelogic but maybe in tax statements' else blc_join_check_grouping end as blc_join_check_grouping , count(*) from (
+    select case when day_diffrence_sal_set < 0 then 'sale date after settlement?'
+                when day_diffrence_sal_set >=0 and day_diffrence_sal_set<=30 then 'blc match for when settlement date avail.'
+                when day_diffrence_sal_set >30 and day_diffrence_sal_set <=100 then 'above the threshold up to 100days'
+                when day_diffrence_sal_set >100 and day_diffrence_sal_set <=300 then 'above the threshold up to 300days'
+                when day_diffrence_sal_set >300 and day_diffrence_sal_set <=500 then 'above the threshold up to 500days'
+                when day_diffrence_sal_set >500 and day_diffrence_sal_set <=1000 then 'above the threshold up to 1000days'
+                when day_diffrence_sal_set >1000 then  'above the threshold up to 1000days' end as blc_join_check_grouping
+    , bse.*
+    
+    from (
+    select cl.qpid,ct as title_no, datediff(cast(to_date(cl.settlement_date) as timestamp),cl.sale_date) as day_diffrence_sal_set,cl.sale_date , cl.settlement_date 
+    from  cp_pty_cl_sale cl  
+    inner join cp_pty_cl_property_match mt on mt.qpid= cl.qpid and mt.match_quality=2
+    where date_part('YEAR',sale_date) >=2015 --and  cl.settlement_date  is not null   
+    
+    ) as bse 
+    ) as cnt group by blc_join_check_grouping
+
+	
+	
+	
+	
+	-- exlcude transmission records.
+	
+	 -- transmission exclusion list
+select  distinct  cast(to_date(ti.lodged_datetime) as timestamp) as instrument_settlement_date
+        , tin.ttl_title_no 
+        , trt_type as instrument_transmission_code
+from   cp_pty_l_title_instrument ti 
+inner join   cp_pty_l_title_instrument_title tin on tin.tin_id= ti.id
+where ttl_title_no = 'GS131/96' and trt_type in ('TSFL','TSM','TSMM')
+
+
+select instrument_transmission_code, count(*) 
+from (
+    select transmission_excl_records.instrument_transmission_code , esti.* 
+    from tmp_pty_dipprp105_test_1 esti
+        left outer join 
+            (
+                 -- transmission exclusion list
+                select  distinct  
+                    cast(to_date(ti.lodged_datetime) as timestamp) as instrument_settlement_date
+                ,   MONTHNAME(months_sub(ti.lodged_datetime,1)) as instrument_settlement_date_minus
+                ,   MONTHNAME(ti.lodged_datetime) as instrument_settlement_month
+                ,   MONTHNAME(months_add(ti.lodged_datetime,1)) as instrument_settlement_date_plus  
+                ,   tin.ttl_title_no 
+                ,   trt_type as instrument_transmission_code
+                from   cp_pty_l_title_instrument ti 
+                inner join   cp_pty_l_title_instrument_title tin on tin.tin_id= ti.id
+                where  trt_type in ('TSFL','TSM','TSMM')
+            ) as transmission_excl_records ON 
+            transmission_excl_records.ttl_title_no = esti.property_title_no and
+            instrument_settlement_date_minus = settlement_month 
+            OR 
+            transmission_excl_records.ttl_title_no = esti.property_title_no and
+            instrument_settlement_date_plus = settlement_month 
+            OR 
+            transmission_excl_records.ttl_title_no = esti.property_title_no and
+            instrument_settlement_date_minus = settlement_month 
+    where esti.settlement_date is not null --and transmission_excl_records.instrument_transmission_code is null
+ ) as cnt 
+ group by instrument_transmission_code
+ 
+ 
+ 
+select  distinct  cast(to_date(ti.lodged_datetime) as timestamp) as instrument_lodged_date, txs.settlement_date as tax_settlement_date, ti.id
+                        , tin.ttl_title_no 
+                        , ti.trt_type as instrument_transmission_code
+                from   cp_pty_l_title_instrument ti 
+                inner join   cp_pty_l_title_instrument_title tin on tin.tin_id = ti.id 
+                left outer join cp_pty_l_tax_statement txs on txs.tin_id = ti.id 
+                where  ti.trt_type not in ('TSFL','TSM','TSMM') and tin.ttl_title_no = 'WN48B/897'
+
+select date_part('YEAR',settlement_date),count(*) from  cp_pty_l_tax_statement txs 
+where transferor_or_transferee = 'TTOR' group by date_part('YEAR',settlement_date) having count(*)> 100
+
+ 
+ 
+ -- problematic code in BLC.
+ --base table 1
+ -- there is an assumption made that period end date is the settlement date, its not and a 
+ -- diffrent date and shouldnt hav ethe same name.
+-- b.period_start as orig_settlement_date,
+ -- this is problematic 
+--b.period_end as sale_settlement_date,
+
+--max(c.sale_date) as sale_date, -- you maxing the date where there may be more than a single sale record for the title?
+
+ --base table 1
+--LEFT JOIN lab_property_project.pty_pd_sale c
+--ON b.title_sk = c.title_sk
+--AND to_date(b.period_end) = to_date(c.settlement_date)
+ 
+ 
+ --final join 
+ 
+--JOIN lab_property_project.pty_pd_sale b
+--ON a.title_sk = b.title_sk
+--AND to_date(a.sale_settlement_date) = to_date(b.sale_date)
+ 
+ 
+ 
+ --b.period_end as sale_settlement_date,
+
+ 
+ --final baseline table your maxing the dates
+ --to_date(max(b.sale_date)) as sale_date_2,
+ --max(b.SALE_PRICE_GROSS) as sale_price doing this statement would likely change a zero sale to a higher value for a title.
+ 
+ --to_date(max(b.sale_date)) as sale_date_2, this would change the date....
+ 
+ -- 1st matching join on settlement date to period end date (asummes this is settlement date this is an issue )
+ 
+ 
+-- this query tries to show that we have titles in corelogic data to match back to the baseline sales data, some may have a sales record which we havnt picked up
+-- this means these records dont need an infffered value they simoply need to be selected correctly
+-- the other reocrds without a corelogic sale are problematic and need a discussion with corelogic
+select  blc.title_no as title_in_base_no_sale_info, blc.sale_settlement_date as blc_settlement_date, blc.sale_date as blc_sale_date, 
+case when mtc.ct=blc.title_no then 'Available in CoreLogic at Quality 2' 
+else nvl(mtc.ct,'Unavailable in CoreLogic at Quality 2') end as title_in_corelogic_qual2_match_tab
+,  case when sale_id is NULL then 'No Sale Record for Title at Quality 2' else 'Yes' end as corelogic_sales_record_availability 
+, sl.sale_date as corelogic_sale_date
+, sl.settlement_Date as corelogic_settlement_date
+, case when blc.sale_settlement_date = sl.settlement_Date then 'Base Code Logic Met'  else 'No'  end as blc_1st_join_sale_settle_date 
+, case when datediff(blc.sale_settlement_date, sl.sale_date) <= 30  and datediff(blc.sale_settlement_date, sl.sale_date) >=0 
+then 'Base Code Logic Met' else 'No' end as blc_2nd_join_sale_settle_date_30_days
+, sl.sale_price_gross as corelogic_sales_value
+from lab_property_project.brightline_base_fn blc 
+left join cp_pty_cl_property_match mtc on blc.title_no= mtc.ct and match_quality=2 -- without the Q2 filter it just doenst work correctly.
+left join  cp_pty_cl_sale sl on mtc.qpid = sl.qpid
+where blc.sale_price is null and blc.sale_date is null
+order by blc.title_no  desc
+
+
+
+
+-- no sales record but there is a match record for Q2, just not sales for Q2, there may be Q0 and Q1 sales records which may be under a
+-- different QPID for the same title..
+-- 6447 titles in coreLogic with no Q2 sales record
+select count(*) from (
+select distinct title_in_base_no_sale_info, corelogic_sales_record_availability from (
+select  blc.title_no as title_in_base_no_sale_info, blc.sale_settlement_date as blc_settlement_date, blc.sale_date as blc_sale_date, 
+case when mtc.ct=blc.title_no then 'Available in CoreLogic' 
+else nvl(mtc.ct,'Unavailable in CoreLogic') end as title_in_corelogic_qual2_match_tab
+,  case when sale_id is NULL then 'No Sale Record for Title at Quality 2' else 'Yes' end as corelogic_sales_record_availability 
+, sl.sale_date as corelogic_sale_date
+, sl.settlement_Date as corelogic_settlement_date
+, case when blc.sale_settlement_date = sl.settlement_Date then 'Base Code Logic Met'  else 'No'  end as blc_1st_join_sale_settle_date 
+, case when datediff(blc.sale_settlement_date, sl.sale_date) <= 30  and datediff(blc.sale_settlement_date, sl.sale_date) >=0 
+then 'Base Code Logic Met' else 'No' end as blc_2nd_join_sale_settle_date_30_days
+, sl.sale_price_gross as corelogic_sales_value
+from lab_property_project.brightline_base_fn blc 
+left join cp_pty_cl_property_match mtc on blc.title_no= mtc.ct and match_quality=2 -- without the Q2 filter it just doenst work correctly.
+left join  cp_pty_cl_sale sl on mtc.qpid = sl.qpid
+where blc.sale_price is null and blc.sale_date is null
+order by blc.title_no  desc
+) as no_sales where corelogic_sales_record_availability = 'No Sale Record for Title at Quality 2') as cnt
+
+
+-- no q2  record for the qpid/title, there may e q0, or q1
+--1364 tiles not in CL data 
+select count(*) from (
+select distinct title_in_base_no_sale_info, title_in_corelogic_qual2_match_tab from (
+select  blc.title_no as title_in_base_no_sale_info, blc.sale_settlement_date as blc_settlement_date, blc.sale_date as blc_sale_date, 
+case when mtc.ct=blc.title_no then 'Available in CoreLogic at Quality 2' 
+else nvl(mtc.ct,'Unavailable in CoreLogic at Quality 2') end as title_in_corelogic_qual2_match_tab
+,  case when sale_id is NULL then 'No Sale Record for Title at Quality 2' else 'Yes' end as corelogic_sales_record_availability 
+, sl.sale_date as corelogic_sale_date
+, sl.settlement_Date as corelogic_settlement_date
+, case when blc.sale_settlement_date = sl.settlement_Date then 'Base Code Logic Met'  else 'No'  end as blc_1st_join_sale_settle_date 
+, case when datediff(blc.sale_settlement_date, sl.sale_date) <= 30  and datediff(blc.sale_settlement_date, sl.sale_date) >=0 
+then 'Base Code Logic Met' else 'No' end as blc_2nd_join_sale_settle_date_30_days
+, sl.sale_price_gross as corelogic_sales_value
+from lab_property_project.brightline_base_fn blc 
+left join cp_pty_cl_property_match mtc on blc.title_no= mtc.ct and match_quality=2 -- without the Q2 filter it just doenst work correctly.
+left join  cp_pty_cl_sale sl on mtc.qpid = sl.qpid
+where blc.sale_price is null and blc.sale_date is null
+order by blc.title_no  desc
+) as no_match where title_in_corelogic_qual2_match_tab = 'Unavailable in CoreLogic at Quality 2') as cnt
