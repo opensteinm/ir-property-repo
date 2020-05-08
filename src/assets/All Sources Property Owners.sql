@@ -2,7 +2,7 @@
 /*
 	Author: 	Mark Openstein
 	
-	Overview: 	Uses the IRD number as an anchor key for all main datasets between LINZ and START and PD and shows the 
+	Overview: 	Uses the IRD number as an anchor key for all main datasets between LINZ and START and merges with PD and showing
 				property ownerships as a per row level not aggregated.
 
 	Known Bugs: 	(a) 	Since the algothim uses the tax statements data and collapses ird ownership data to the top level trustee, there is duplicates
@@ -15,11 +15,12 @@
 	Date Last Updated: 08/05/2020 
 
 	Version History:
-		1.3.4 PD query changes to left outer join to get more results
+		1.3.5 Comments and changes to new schemas to get data. (Issue raised that a table is missing in fcp raw :pty_l_title_action ) 
+		1.3.4 PD query changes to left outer join to get more results (LMITED TO INNER...)
 		1.3.2. added tax_conveyancor column and ownership column calculations for tax_conveyancor
 		1.3 updated final merge to add wonership calculationsion based on names and sepertly based on ir numbers.
 		1.1-1.2 extract date added back as was lost, fixes to dup precedence
-		1.0 final merge 	query adds linz data as precendece since it determins that if tat dataset has an ird number is more correct than PD.
+		1.0 final merge query adds linz data as precendece since it determins that if tat dataset has an ird number is more correct than PD.
 		0.9 moved agg counts one level up and expanded precendce chckes to X and N to remove dups (moved back to X as there was issues with this loigc inclduing more chercks for a single line)
 	    0.8: added the owners with no ird  umber for UNION 
 	    0.7: added calc_foreign_flag using START data and cahnged verlast to ver=0
@@ -50,7 +51,7 @@
 /*#########################################################################################################################################################*/
 
  -- there is name based duplicates with the linz data, but the loigc is based around the ird numbers.so its not really duplicates unless we change logic to the name
-    create table lab_property_project.tmp_pty_l_s_owners
+     create table lab_property_project.tmp_pty_l_s_owners
     STORED AS PARQUET AS
 -- #### (1) top sub-select derives the calculated columns
 select 
@@ -117,13 +118,13 @@ from
 							, NVL(cast(txs.ird_number as varchar),'Unknown') as ird_number 
 							, ta.ttl_title_no
 							, MAX(NVL(txs.statement_date, cast('9000-12-01 00:00:00' as timestamp))) as statement_date
-						from cp_pty_l_tax_statement txs  -- not all titles have a tax statement for the owner ='CB18F/1092'
-						inner join cp_pty_l_title_action ta on ta.act_tin_id = txs.tin_id 
-						inner join  cp_pty_l_title tt on tt.title_no= ta.ttl_title_no
-						inner join app_tblid ird on cast(ird.fstrid as bigint)=txs.ird_number 
-					    inner join app_tblcustomer cus on cus.flngcustomerkey = ird.flngcustomerkey and ird.record_active_flag = 'Y' and ird.fstridtype= 'IRD' and cus.record_active_flag='Y' 
-                        inner join app_tblnamerecord nam on cus.flngcustomerkey= nam.flngcustomerkey and nam.record_active_flag = 'Y' and nam.fintprofilenumber=1 and nam.flngver=0
-						left join app_tblnz_customerstd crs on crs.flngdockey=cus.flngdockey and crs.record_active_flag='Y' and nam.fintprofilenumber=1 and nam.flngver=0 --nam.flngverlast=0   -- ADDED THIS 27-11, CHECK!
+						from lab_fcp_raw_restricted_access.pty_l_tax_statement txs  -- not all titles have a tax statement for the owner ='CB18F/1092'
+						inner join lab_property_project.cp_pty_l_title_action ta on ta.act_tin_id = txs.tin_id -- IMPORTANT THIS TABLE ISNT IN THE NEW SCHEMA!!!!
+						inner join  lab_fcp_raw_restricted_access.pty_l_title tt on tt.title_no= ta.ttl_title_no
+						inner join prod_raw_restricted_access.app_tblid ird on cast(ird.fstrid as bigint)=txs.ird_number  --THIS IS NOW ONLY IN raw 
+					    inner join prod_raw_restricted_access.app_tblcustomer cus on cus.flngcustomerkey = ird.flngcustomerkey and ird.record_active_flag = 'Y' and ird.fstridtype= 'IRD' and cus.record_active_flag='Y' 
+                        inner join prod_raw_restricted_access.app_tblnamerecord nam on cus.flngcustomerkey= nam.flngcustomerkey and nam.record_active_flag = 'Y' and nam.fintprofilenumber=1 and nam.flngver=0
+						left join prod_raw_restricted_access.app_tblnz_customerstd crs on crs.flngdockey=cus.flngdockey and crs.record_active_flag='Y' and nam.fintprofilenumber=1 and nam.flngver=0 --nam.flngverlast=0   -- ADDED THIS 27-11, CHECK!
 						group by
 							 NVL(cast(txs.ird_number as varchar),'Unknown') 
 							, ta.ttl_title_no
@@ -164,14 +165,14 @@ from
 						, tt.status as title_status
 						, tt.type as title_type
 						, NVL(tt.issue_date, cast('9000-12-01 00:00:00' as timestamp))  as title_issue_date
-					from cp_pty_l_tax_statement txs  -- not all titles have a tax statement for the owner ='CB18F/1092'
-					inner join cp_pty_l_title_action ta on ta.act_tin_id = txs.tin_id 
-					inner join  cp_pty_l_title tt on tt.title_no= ta.ttl_title_no
-					inner join app_tblid ird on cast(ird.fstrid as bigint)=txs.ird_number 
-					inner join app_tblcustomer cus on cus.flngcustomerkey = ird.flngcustomerkey and ird.record_active_flag = 'Y' and ird.fstridtype= 'IRD' and cus.record_active_flag='Y' 
+					from lab_fcp_raw_restricted_access.pty_l_tax_statement txs  -- not all titles have a tax statement for the owner ='CB18F/1092'
+					inner join lab_property_project.cp_pty_l_title_action ta on ta.act_tin_id = txs.tin_id 
+					inner join  lab_fcp_raw_restricted_access.pty_l_title tt on tt.title_no= ta.ttl_title_no
+					inner join prod_raw_restricted_access.app_tblid ird on cast(ird.fstrid as bigint)=txs.ird_number 
+					inner join prod_raw_restricted_access.app_tblcustomer cus on cus.flngcustomerkey = ird.flngcustomerkey and ird.record_active_flag = 'Y' and ird.fstridtype= 'IRD' and cus.record_active_flag='Y' 
                     -- this wil return duplicates becuase we can have multiple active trading names in START. 100002231
-                    inner join app_tblnamerecord nam on cus.flngcustomerkey= nam.flngcustomerkey and nam.record_active_flag = 'Y' and nam.fintprofilenumber=1 and nam.flngver=0-- verlast=0 to to select one active trading name, may still be dups fr diffrent names
-                    left join app_tblnz_customerstd crs on crs.flngdockey=cus.flngdockey and crs.record_active_flag='Y' and nam.fintprofilenumber=1 and nam.flngver=0 --nam.flngverlast=0
+                    inner join prod_raw_restricted_access.app_tblnamerecord nam on cus.flngcustomerkey= nam.flngcustomerkey and nam.record_active_flag = 'Y' and nam.fintprofilenumber=1 and nam.flngver=0-- verlast=0 to to select one active trading name, may still be dups fr diffrent names
+                    left join prod_raw_restricted_access.app_tblnz_customerstd crs on crs.flngdockey=cus.flngdockey and crs.record_active_flag='Y' and nam.fintprofilenumber=1 and nam.flngver=0 --nam.flngverlast=0
 
                 	) as b
 					ON a.statement_date = b.tax_max_statement_date 
@@ -187,6 +188,8 @@ from
 	) as final 
 -- where  start_owner_full_name='HYE KYUNG PARK'--final.tax_ird_number in ('125764320') and title_ttl_title_no ='16951'
 order by final.tax_ird_number,final.calc_record_row_num, final.title_ttl_title_no 
+
+
 
 /*################################################### STEP2: CREATE THE PROPERTYDATAMART DATA SET TABLE (WITH PRECEDENT TO SET PARTNERSHIPS AND TRUSTSD AS NOT HAINVG RESIDENT AND CITIZEN FLAG AVAILABLE -X)*/
 /*#########################################################################################################################################################*/
@@ -205,7 +208,7 @@ order by final.tax_ird_number,final.calc_record_row_num, final.title_ttl_title_n
 
   -- LAURA NG has an issue whee sdome records provided she is a resident others are not which complicates the overall figures...
 --some ird number records coming up so removing them from the data
-   create table lab_property_project.tmp_pty_pd_owners
+  CREATE table lab_property_project.tmp_pty_pd_owners
    STORED AS PARQUET AS
 select 
 	 case 
@@ -311,23 +314,23 @@ from
                         	, ttl.status as title_status
                         	, ttl.title_type as title_type  
                         	, ttl.issue_date as title_issue_date
-                                from pty_pd_title_ownership_period opr
-                        inner join pty_pd_title ttl on ttl.title_sk = opr.title_sk
-                        inner join pty_pd_top_owner top on top.top_sk =opr.top_sk 
-                        left join pty_pd_tax_stmt_summary txs on txs.title_sk = ttl.title_sk and txs.transfer_type = 'Transferee' -- dont need tax statement to avoid dups
-                        left join pty_pd_tax_stmt txf on txf.instr_id=txs.instr_id and txf.transferor_or_transferee='TTEE' -- we use this table to get the name info as a transpose version to avoid logic complications using the opr owners value (but we dont have all values)
+                                from lab_fcp_raw_restricted_access.pty_pd_title_ownership_period opr
+                        inner join lab_fcp_raw_restricted_access.pty_pd_title ttl on ttl.title_sk = opr.title_sk
+                        inner join lab_fcp_raw_restricted_access.pty_pd_top_owner top on top.top_sk =opr.top_sk 
+                        left join lab_fcp_raw_restricted_access.pty_pd_tax_stmt_summary txs on txs.title_sk = ttl.title_sk and txs.transfer_type = 'Transferee' -- dont need tax statement to avoid dups
+                        left join lab_fcp_raw_restricted_access.pty_pd_tax_stmt txf on txf.instr_id=txs.instr_id and txf.transferor_or_transferee='TTEE' -- we use this table to get the name info as a transpose version to avoid logic complications using the opr owners value (but we dont have all values)
                         where opr.period_end= cast('9999-12-31 00:00:00' as timestamp)   and txf.ir_ird_number IS NULL
                      ) as core_data 
                     ${joinType=left join,inner join} -- inner join
                         ( -- doesn't resolve the precedence issue for tax statements
                             select ttl.title_no as title_ttl_title_no
                             	 ,  MAX(ISNULL(txf.statement_date, cast('9000-12-01 00:00:00' as timestamp)) ) as tax_max_statement_date
-                              from pty_pd_title_ownership_period opr
-                              inner join pty_pd_title ttl on ttl.title_sk = opr.title_sk
-                              inner join pty_pd_top_owner top on top.top_sk =opr.top_sk 
+                              from lab_fcp_raw_restricted_access.pty_pd_title_ownership_period opr
+                              inner join lab_fcp_raw_restricted_access.pty_pd_title ttl on ttl.title_sk = opr.title_sk
+                              inner join lab_fcp_raw_restricted_access.pty_pd_top_owner top on top.top_sk =opr.top_sk 
                               --statement dates different in these two tables...
-                              left join pty_pd_tax_stmt_summary txs on txs.title_sk = ttl.title_sk and txs.transfer_type = 'Transferee'-- dont need tax statement to avoid dups
-                              left join pty_pd_tax_stmt txf on txf.instr_id=txs.instr_id and txf.transferor_or_transferee='TTEE' -- not all records have txs.instr_id  therefore wont have a name recor din this table for us to retrieve 
+                              left join lab_fcp_raw_restricted_access.pty_pd_tax_stmt_summary txs on txs.title_sk = ttl.title_sk and txs.transfer_type = 'Transferee'-- dont need tax statement to avoid dups
+                              left join lab_fcp_raw_restricted_access.pty_pd_tax_stmt txf on txf.instr_id=txs.instr_id and txf.transferor_or_transferee='TTEE' -- not all records have txs.instr_id  therefore wont have a name recor din this table for us to retrieve 
                             where opr.period_end= cast('9999-12-31 00:00:00' as timestamp) and txf.ir_ird_number IS NULL
                             GROUP BY title_ttl_title_no
                         ) as max_txt_date 
@@ -345,9 +348,10 @@ from
 order by final.pd_owner_full_name,final.calc_record_row_num, final.title_ttl_title_no 
 
 
-/* thyere s dups across datasets */
 
-create table lab_property_project.tmp_pty_dip_owners
+/* thyere s dups across datasets */
+-- check the _version number with the data used in CAS by the report.
+create table lab_property_project.tmp_pty_dip_owners_v3
 STORED AS PARQUET AS
 
 
@@ -455,7 +459,7 @@ from
         	, pre_stag.extraction_run_date
         	, pre_stag.source
 from (
-select 
+select -- code to ensure we provide precednce for duplicate values acorss pd and linz data
    CASE WHEN  prec_src_chk.prec_src_chk  LIKE '%LINZSTART%' AND all_data.source ='LINZSTART' THEN 1 
         WHEN  prec_src_chk.prec_src_chk  = 'LINZSTART' AND all_data.source ='LINZSTART' THEN 1 
         WHEN  prec_src_chk.prec_src_chk  = 'PROPERTYDATAMART' AND all_data.source ='PROPERTYDATAMART' THEN 1 
@@ -482,7 +486,7 @@ select
         	, pto.title_issue_date
         	, pto.extraction_run_date
         	, 'PROPERTYDATAMART' as source
-        from  tmp_pty_pd_owners   pto
+        from  lab_property_project.tmp_pty_pd_owners   pto
         
         UNION
         
@@ -506,7 +510,7 @@ select
         	, cast(trunc(lso.title_issue_date,'DD') as timestamp) as title_issue_date -- remove time from linz data as its not in PD
         	, lso.extraction_run_date
         	, 'LINZSTART' as source
-        from  tmp_pty_l_s_owners   lso
+        from   lab_property_project.tmp_pty_l_s_owners   lso
         ) as all_data  
 INNER JOIN 
     (
@@ -521,14 +525,14 @@ INNER JOIN
                 	, pto.title_ttl_title_no
                 	, pto.title_issue_date
                 	, 'PROPERTYDATAMART' as source
-                from  tmp_pty_pd_owners   pto 
+                from  lab_property_project.tmp_pty_pd_owners   pto 
                 UNION
                 select 
                 	 lso.start_owner_full_name
                 	, lso.title_ttl_title_no
                 	, cast(trunc(lso.title_issue_date,'DD') as timestamp) as title_issue_date -- remove time from issue date 2012-05-24 00:00:00
                 	, 'LINZSTART' as source
-                from  tmp_pty_l_s_owners   lso
+                from  lab_property_project.tmp_pty_l_s_owners   lso
                 ) as all_data
                 GROUP BY 
                 	 all_data.pd_owner_full_name
