@@ -1,0 +1,2360 @@
+/* Set up libraries  */
+cas mySession sessopts=(caslib=casuser timeout=1800 locale="en_US");
+
+libname casuser cas caslib="casuser" datalimit=ALL;
+libname prop cas caslib="lab_hive_ep_project_property";
+libname public cas caslib=public datalimit=ALL sessref=mySession; 
+
+LIBNAME huehive  HADOOP uri='jdbc:hive2://ird26au.vsp.sas.com:10003/;principal=hive/ird26au.vsp.sas.com@VSP.SAS.COM;ssl=true;sslTrustStore=/opt/sas/hadoopfiles/
+CA/DigiAndSAS-CA.jks?hive.default.fileformat.managed=parquet;hive.default.fileformat=parquet'
+HDFS_TEMPDIR="/env/4_lab/hive/projects/property/"  
+                                       SCHEMA="lab_property_project";
+
+
+
+/*   _______    ______    ______   ________        ________  ______   _______   __        ________   ______  
+/       \  /      \  /      \ /        |      /        |/      \ /       \ /  |      /        | /      \ 
+$$$$$$$  |/$$$$$$  |/$$$$$$  |$$$$$$$$/       $$$$$$$$//$$$$$$  |$$$$$$$  |$$ |      $$$$$$$$/ /$$$$$$  |
+$$ |__$$ |$$ |__$$ |$$ \__$$/ $$ |__             $$ |  $$ |__$$ |$$ |__$$ |$$ |      $$ |__    $$ \__$$/ 
+$$    $$< $$    $$ |$$      \ $$    |            $$ |  $$    $$ |$$    $$< $$ |      $$    |   $$      \ 
+$$$$$$$  |$$$$$$$$ | $$$$$$  |$$$$$/             $$ |  $$$$$$$$ |$$$$$$$  |$$ |      $$$$$/     $$$$$$  |
+$$ |__$$ |$$ |  $$ |/  \__$$ |$$ |_____          $$ |  $$ |  $$ |$$ |__$$ |$$ |_____ $$ |_____ /  \__$$ |
+$$    $$/ $$ |  $$ |$$    $$/ $$       |         $$ |  $$ |  $$ |$$    $$/ $$       |$$       |$$    $$/ 
+$$$$$$$/  $$/   $$/  $$$$$$/  $$$$$$$$/          $$/   $$/   $$/ $$$$$$$/  $$$$$$$$/ $$$$$$$$/  $$$$$$/  
+                                                                                                    
+
+  */                                                                                          
+                                                                                            
+                                                                                            
+/* Base table 1 - all sales within brighline preiod  */
+proc sql;
+connect to impala as testdb (dsn=cloudera_impala schema=lab_property_project);
+execute(drop table IF EXISTS BRIGHTLINE_BASE purge) by testdb;
+
+execute
+(CREATE TABLE BRIGHTLINE_BASE STORED AS PARQUET AS
+select 
+row_number() over (partition by a.instr_id, d.title_no order by a.instr_id) as row_num,
+d.title_no,
+d.issue_date as title_issued,
+a.party_names,
+b.period_start as orig_settlement_date,
+b.period_end as sale_settlement_date,
+max(c.sale_date) as sale_date,
+/* -- CASE WHEN c.sale_date IS NOT NULL THEN to_date(max(c.sale_date)) end as sale_date, */
+/* -- max(c.sale_price_gross) as sale_price, */
+
+CASE WHEN max(c.sale_date) IS NOT NULL AND max(c.sale_date) > b.period_start THEN max(c.sale_date) ELSE (b.period_end) end as BL_DATE,
+a.exemption_code,
+a.transfer_type,
+a.num_parties,
+a.IR_ENTITY_type,
+e.address,
+e.suburb,
+e.town,
+e.postcode,
+h.ta_desc as area_region,
+a.instr_id,
+a.title_sk,
+b.top_sk,
+bb.memorial_id,
+d.maori_land,
+e.land_zone_desc,
+e.land_use_desc,
+/* f.ttl_title_no_prior as prior_title_no, */
+/* g.title_sk as prior_title_sk, */
+case when i.title_sk is not null then 'Y' ELSE 'N' end as timeshare
+/* CASE WHEN bbb.owners like '%Executor%' and bbb.event_type_sk = 4 and b.event_type_sk = 3 THEN 'Y' ELSE 'N' END AS Inherited_Flag */
+
+
+
+FROM lab_property_project.pty_pd_tax_stmt_summary a
+
+JOIN lab_property_project.pty_pd_title_ownership_period b
+ON a.instr_id = b.next_instr_id
+AND a.title_sk = b.title_sk
+
+JOIN lab_property_project.pty_pd_title_ownership_period bb
+ON bb.instr_id = b.next_instr_id
+AND bb.title_sk = b.title_sk
+
+LEFT JOIN lab_property_project.pty_pd_title_ownership_period bbb
+ON b.instr_id = bbb.next_instr_id
+AND b.title_sk = bbb.title_sk
+
+LEFT JOIN lab_property_project.pty_pd_sale c
+ON b.title_sk = c.title_sk
+AND to_date(b.period_end) = to_date(c.settlement_date)
+
+JOIN lab_property_project.pty_pd_title d
+ON a.title_sk = d.title_sk
+
+JOIN lab_property_project.pty_pd_property_history e
+ON d.qpid = e.qpid
+and e.current_flag = 'Y'
+
+
+/* LEFT JOIN lab_property_project.pty_l_title_hier f */
+/* ON d.title_no = f.ttl_title_no_flw */
+/*  */
+/* LEFT JOIN lab_property_project.pty_pd_title g */
+/* ON f.ttl_title_no_prior = g.title_no */
+
+LEFT JOIN lab_property_project.pty_pd_property_address h
+ON a.title_sk = h.title_sk
+
+LEFT JOIN
+(
+select distinct a.ttl_title_no,
+b.title_sk
+from lab_property_project.cp_pty_l_title_estate a
+left join lab_property_project.pty_pd_title b
+ON a.ttl_title_no = b.title_no
+where a.timeshare_week_no is not null
+) i 
+ON a.title_sk = i.title_sk
+
+
+WHERE to_date(b.period_start) > '2015-09-30'
+AND to_date(b.period_end) > '2015-09-30'
+AND a.transfer_type = 'Transferor'
+AND bb.event_type_sk = 3
+AND(
+(to_date(b.period_start) < '2018-03-29' AND datediff(b.period_end,b.period_start) between 0 and 730)
+OR (to_date(b.period_start) < '2018-03-29' AND datediff(c.sale_date,b.period_start) <= 730)
+OR(to_date(b.period_start) > '2018-03-28' AND datediff(b.period_end,b.period_start) between 0 and 1825)
+OR(to_date(b.period_start) > '2018-03-28' AND datediff(c.sale_date,b.period_start) <= 1825)
+)
+/*brightline only applies to residential property so limit transactions to these*/
+AND e.property_type <> 'Commercial'
+AND  e.land_use_desc NOT IN('Vacant Industrial', 'Religioius', 'Depot and Yards', 'Public Communal – Unlicenced')
+AND(
+(e.Property_type = 'Residential' and e.category_desc <> 'Vacant')
+OR (e.Property_type = 'Residential' and e.category_desc = 'Vacant' AND (land_use_desc like '%Residential%' OR land_use_desc like '%Lifestyle%' OR land_use_desc like '%Bach%'))
+OR e.land_zone_desc LIKE '%Residential%'
+OR e.land_zone_desc LIKE '%Lifestyle%'
+OR (e.land_use_desc IN ('Single Unit - Lifestyle', 'Bach','Residential','Vacant Lifestyle') and e.category_desc IN('Improved','Bare Block','Vacant**'))
+)
+
+
+
+GROUP BY
+d.title_no,
+d.issue_date,
+a.party_names,
+b.period_start,
+b.period_end ,
+/*c.sale_date,*/
+/*CASE WHEN max(c.sale_date) IS NOT NULL THEN max(c.sale_date) ELSE b.period_end END AS BL_DATE,*/
+a.exemption_code,
+a.transfer_type,
+a.num_parties,
+a.IR_entity_type,
+e.address,
+e.suburb,
+e.town,
+e.postcode,
+h.TA_desc,
+a.instr_id,
+a.title_sk,
+b.top_sk,
+bb.memorial_id,
+d.maori_land,
+e.Land_zone_desc,
+e.land_use_desc,
+ bbb.owners,
+  bbb.event_type_sk,
+   b.event_type_sk,
+/* f.ttl_title_no_prior, */
+/* g.title_sk, */
+i.title_sk
+) by testdb;
+
+
+
+
+/* ***************************************************************************************************************** */
+/* Brightline Base table 2 - Removing Nominal Owners*/
+/* ***************************************************************************************************************** */
+
+execute(drop table IF EXISTS BRIGHTLINE_BASE_2 purge) by testdb;
+
+execute
+(CREATE TABLE BRIGHTLINE_BASE_2 STORED AS PARQUET AS
+SELECT a.*,
+b.earliest_date as purchase_date
+FROM brightline_base a
+JOIN
+(
+select 
+a.instr_id,
+a.title_sk,
+a.party_names,
+a.orig_settlement_date,
+a.sale_settlement_date,
+min(d.period_start) as earliest_date
+FROM brightline_base a
+JOIN lab_property_project.pty_pd_top_owner b
+ON a.top_sk = b.top_sk
+JOIN lab_property_project.pty_pd_top_owner c
+ON b.owner_sk=c.owner_sk
+JOIN lab_property_project.pty_pd_title_ownership_period d
+ON c.top_sk = d.top_sk
+AND a.title_sk = d.title_sk
+and d.event_type_sk IN(2,3)
+GROUP BY
+a.instr_id,
+a.title_sk,
+a.party_names,
+a.orig_settlement_date,
+a.sale_settlement_date
+) b
+ON a.instr_id = b.instr_id
+and a.title_sk = b.title_sk
+
+WHERE to_date(b.earliest_date) >= '2015-10-01'
+AND(
+(to_date(b.earliest_date) < '2018-03-29' AND datediff(a.bl_date,b.earliest_date) <= 730)
+OR(to_date(b.earliest_date) >= '2018-03-29' AND datediff(a.bl_date,b.earliest_date) <= 1825)
+)
+) by testdb;
+
+
+
+    disconnect from testdb;
+quit;
+
+/* ***************************************************************************************************************** */
+/* title lookback code  */
+/* ***************************************************************************************************************** */
+
+/* Start timer */
+%let _timer_start = %sysfunc(datetime());
+
+/* Set up libraries so we can bring counts back for loop */
+libname casuser cas caslib="casuser" datalimit=ALL;
+libname prop cas caslib="lab_hive_ep_project_property";
+
+
+/* Pre-loop setup */
+/* Create tables tmp_prior_title and tmp_prior_title_owners */
+proc sql;
+	connect to impala as testdb (dsn=cloudera_impala schema=lab_property_project);
+	execute(drop table IF EXISTS tmp_prior_title purge) by testdb;
+	execute(drop table IF EXISTS tmp_prior_title_1 purge) by testdb;
+	execute(drop table IF EXISTS tmp_prior_title_owners purge) by testdb;
+	execute(drop table IF EXISTS tmp_prior_title_owners_1 purge) by testdb;
+	execute(drop table IF EXISTS tmp_prior_title_count purge) by testdb;
+
+	/* Create table of title/top/owner combinations that we are interest in looking back through the titles for */
+	execute(CREATE TABLE tmp_prior_title_1 STORED AS PARQUET AS
+			select a.title_no, a.title_issued, a.title_sk, a.top_sk, b.period_start, b.period_end, c.owner_sk, b.event_type_sk,
+			CASE WHEN a.title_issued < '2015-10-01 00:00:00' THEN 'Title issued before 01/10/15'
+			WHEN a.title_issued >= '2015-10-01 00:00:00' and b.period_start > a.title_issued THEN 'Title issued before ownership period start'
+			ELSE '' END AS title_status
+			FROM BRIGHTLINE_BASE_2 a
+			LEFT JOIN PTY_PD_TITLE_OWNERSHIP_PERIOD b
+			ON a.top_sk = b.top_sk
+			LEFT JOIN PTY_PD_TOP_OWNER c
+			ON a.top_sk = c.top_sk
+/*     Only select sales where we haven't previous done title lookback */
+/*             WHERE concat_ws('-',a.title_no,cast(a.instr_id as string)) not in(select concat_ws('-',title_no,cast(instr_id as string)) FROM TMP_PRIOR_TITLE_FINAL) */
+         ) by testdb;
+
+	execute(CREATE TABLE tmp_prior_title STORED AS PARQUET AS
+			select title_no, title_issued, title_sk, top_sk, period_start, period_end, owner_sk, event_type_sk, title_status, 
+			CASE WHEN title_status = '' THEN  title_no END AS previous_title,
+			CASE WHEN title_status = '' THEN  period_start END AS land_start,
+			0 as num_titles_back
+			FROM tmp_prior_title_1) by testdb;
+
+	execute(drop table IF EXISTS tmp_prior_title_1 purge) by testdb;
+	
+	/* Create table of all ownership persiods associated with owner_sk's in questions (speeds up processing, will be deleted later) */
+	execute(CREATE TABLE tmp_prior_title_owners_1 STORED AS PARQUET AS
+			select distinct owner_sk
+			FROM tmp_prior_title) by testdb;
+
+	execute(CREATE TABLE tmp_prior_title_owners STORED AS PARQUET AS
+			select a.owner_sk, b.top_sk as alt_top_sk, c.title_sk, c.event_type_sk as prior_event_type_sk, c.period_start as prior_period_start, c.period_end as prior_period_end
+			FROM tmp_prior_title_owners_1 a
+			left join PTY_PD_TOP_OWNER b
+			on a.owner_sk = b.owner_sk
+			left join PTY_PD_TITLE_OWNERSHIP_PERIOD c
+			on b.top_sk = c.top_sk) by testdb;
+
+	execute(CREATE TABLE tmp_prior_title_count STORED AS PARQUET AS
+			select count(*) as count
+			from tmp_prior_title
+			where title_status = '') by testdb;
+
+	execute(drop table IF EXISTS tmp_prior_title_owners_1 purge) by testdb;
+	execute(invalidate metadata tmp_prior_title_owners) by testdb;
+    disconnect from testdb;
+quit;
+
+
+proc casutil;
+	load casdata="tmp_prior_title_count" INCASLIB="lab_hive_ep_project_property" casout="count" outcaslib="casuser";
+quit;
+data _null_;
+  set casuser.count;
+  if _n_=1 then do;
+    call symputx('countvar',count);
+  end;
+  stop;
+run;
+%put &countvar;
+proc delete data=casuser.count;
+
+
+/* Loop back through prior titles */
+%macro loop;
+%let i=0;
+%do %until(&countvar = 0 or &i >= 50); /* 50 is maximum number of titles to look back */
+%let i=%eval(&i+1);
+
+proc sql;
+	connect to impala as testdb (dsn=cloudera_impala schema=lab_property_project);
+	execute(set sync_ddl=1) by testdb;
+	execute(drop table IF EXISTS tmp_prior_title_1 purge) by testdb;
+	execute(drop table IF EXISTS tmp_prior_title_2 purge) by testdb;
+	execute(drop table IF EXISTS tmp_prior_title_3 purge) by testdb;
+	execute(drop table IF EXISTS tmp_prior_title_4 purge) by testdb;
+	execute(drop table IF EXISTS tmp_prior_title_count purge) by testdb;
+	
+	/* Join to previous title */
+	execute(CREATE TABLE tmp_prior_title_1 STORED AS PARQUET AS
+			select a.title_no, a.title_issued, a.title_sk, a.top_sk, a.event_type_sk, a.period_start, a.period_end, a.owner_sk, a.title_status, a.previous_title, a.land_start, a.num_titles_back,
+			b.ttl_title_no_prior, c.issue_date, d.alt_top_sk, d.prior_period_start, d.prior_period_end, d.prior_event_type_sk 
+			FROM tmp_prior_title a
+			left join CP_PTY_L_TITLE_HIER b
+			on a.previous_title = b.ttl_title_no_flw
+			left join PTY_PD_TITLE c
+			on b.ttl_title_no_prior = c.title_no
+			left join tmp_prior_title_owners d
+			on c.title_sk=d.title_sk and a.owner_sk=d.owner_sk
+			where a.title_status = '') by testdb;
+
+	/* Remove any alt_top_sk's which end at least a day before the start of the next period (ownership is discontinious) 
+	Just set prior_period_start = null as this flows through to further logic and is not included */
+	execute(CREATE TABLE tmp_prior_title_2 STORED AS PARQUET AS
+			select title_no, title_issued, title_sk, top_sk, event_type_sk, period_start, period_end, owner_sk, title_status, previous_title, land_start, num_titles_back,
+			ttl_title_no_prior, issue_date, alt_top_sk, prior_event_type_sk,prior_period_start,
+/* 			case when nonnullvalue(prior_period_end) and date_trunc('day',prior_period_end) < date_trunc('day',land_start) then NULL else prior_period_start end as prior_period_start,  */
+			prior_period_end
+			from tmp_prior_title_1 WHERE nonnullvalue(alt_top_sk)) by testdb;
+
+	/* Update variables to put back into tmp_prior_title */
+	execute(CREATE TABLE tmp_prior_title_3 STORED AS PARQUET AS
+			select title_no, title_issued, title_sk, top_sk, period_start, period_end, owner_sk, 
+			case when nonnullvalue(prior_event_type_sk) then prior_event_type_sk
+			else event_type_sk end as event_type_sk,
+			case when nullvalue(prior_period_start) then 'Land_start is start of ownership'
+			when prior_period_start < '2015-10-01 00:00:00' then 'Land owned before 01/10/15'
+			when issue_date < prior_period_start then 'Prior title predates prior ownership period'
+			ELSE '' END AS title_status,
+			case when nonnullvalue(ttl_title_no_prior) then ttl_title_no_prior
+			else previous_title end as previous_title,
+			case when nonnullvalue(prior_period_start) then prior_period_start
+			else land_start end as land_start,
+			num_titles_back + 1 as num_titles_back
+			from tmp_prior_title_2) by testdb;
+
+	/* Update tmp_prior_title for next iteration */
+	execute(CREATE TABLE tmp_prior_title_4 STORED AS PARQUET AS
+			select *
+			FROM tmp_prior_title a
+			where a.title_status != '') by testdb;
+	execute(drop table IF EXISTS tmp_prior_title purge) by testdb;
+
+	execute(CREATE TABLE tmp_prior_title STORED AS PARQUET AS
+			select * FROM tmp_prior_title_4
+			union all
+			select * from tmp_prior_title_3) by testdb;
+
+	/* Update count of rows that still need to look back titles */
+	execute(CREATE TABLE tmp_prior_title_count STORED AS PARQUET AS
+			select count(*) as count
+			from tmp_prior_title
+			where title_status = '') by testdb;
+
+	/* Delete temp tables no longer needed*/
+	execute(drop table IF EXISTS tmp_prior_title_1 purge) by testdb;
+	execute(drop table IF EXISTS tmp_prior_title_2 purge) by testdb;
+	execute(drop table IF EXISTS tmp_prior_title_3 purge) by testdb;
+	execute(drop table IF EXISTS tmp_prior_title_4 purge) by testdb;
+    disconnect from testdb;
+quit;
+
+proc casutil;
+	load casdata="tmp_prior_title_count" INCASLIB="lab_hive_ep_project_property" casout="count" outcaslib="casuser";
+quit;
+data _null_;
+  set casuser.count;
+  if _n_=1 then do;
+    call symputx('countvar',count);
+  end;
+  stop;
+run;
+%put &countvar;
+proc delete data=casuser.count;
+
+%end;
+%mend loop;
+%loop;
+
+
+/* Final tidy up, delete tmp_prior_title_owners, include event type descriptions */
+proc sql;
+	connect to impala as testdb (dsn=cloudera_impala schema=lab_property_project);
+	execute(drop table IF EXISTS tmp_prior_title_owners purge) by testdb;
+	execute(drop table IF EXISTS tmp_prior_title_count purge) by testdb;
+	execute(drop table IF EXISTS tmp_prior_title_final purge) by testdb;
+
+	execute(CREATE TABLE tmp_prior_title_final AS
+	select distinct a.*  /*, b.Event_type*/
+	from tmp_prior_title a
+	/***** Join to event type descriptions when these are imported into the DIP *****/
+	/* left join pd_event_type b
+	on a.event_type_sk = b.event_type_sk */
+	) by testdb;
+
+
+
+	execute(drop table IF EXISTS tmp_prior_title purge) by testdb;
+/* 	execute(CREATE TABLE tmp_prior_title AS */
+/* 	select * FROM tmp_prior_title_final) by testdb; */
+/* 	execute(drop table IF EXISTS tmp_prior_title_final purge) by testdb; */
+
+
+
+	execute(invalidate metadata tmp_prior_title_final) by testdb;
+    disconnect from testdb;
+quit;
+
+
+/* Stop timer */
+data _null_;
+  dur = datetime() - &_timer_start;
+  put 30*'-' / ' TOTAL DURATION:' dur time13.2 / 30*'-';
+run;
+
+
+/* Testing - generate frequency table of title_status and num_titles_back */
+proc casutil;
+	load casdata="TMP_PRIOR_TITLE_FINAL" INCASLIB="lab_hive_ep_project_property" casout="prior_title_final" outcaslib="casuser";
+quit;
+proc freq data=casuser.prior_title_final; tables num_titles_back*title_status / norow nocol nopct; run;
+proc delete data=casuser.prior_title_final; run; 
+
+
+
+
+
+
+/* ***************************************************************************************************************** */
+/* Brightline Base table 3 - Title lookback, removing where customer owner prior titles pre 2015(not BL liable)* */
+/* ***************************************************************************************************************** */
+proc sql;
+connect to impala as testdb (dsn=cloudera_impala schema=lab_property_project);
+execute(drop table IF EXISTS BRIGHTLINE_BASE_3 purge) by testdb;
+
+execute
+(CREATE TABLE BRIGHTLINE_BASE_3 STORED AS PARQUET AS
+select a.* from
+
+(
+select a.*,
+CASE WHEN aa.event_type_sk IS NOT NULL THEN aa.event_type_sk ELSE b.event_type_sk end as purchase_event,
+bb.event_type_sk as prev_event,
+c.previous_titles
+
+FROM 
+(
+select a.* from
+(
+select a.*,
+CASE WHEN b.earliest_date IS NOT NULL THEN b.earliest_date else a.purchase_date end as purchase_date_2
+
+FROM lab_property_project.brightline_base_2 a
+LEFT JOIN(
+
+select a.instr_id,a.title_sk, MAX(a.earliest_date) as earliest_date
+
+FROM(
+select
+a.instr_id,
+a.title_sk,
+d.previous_title,
+min(d.land_start) as earliest_date
+
+FROM lab_property_project.brightline_base_2 a
+
+JOIN lab_property_project.pty_pd_top_owner b
+ON a.top_sk = b.top_sk
+JOIN lab_property_project.pty_pd_top_owner c
+ON b.owner_sk=c.owner_sk
+JOIN lab_property_project.tmp_prior_title_final d
+ON c.top_sk = d.top_sk
+AND c.owner_sk = d.owner_sk
+AND a.title_sk = d.title_sk
+/*and d.event_type_sk IN(2,3)*/
+   /*-- where a.title_no = '801666'*/
+
+GROUP BY
+a.instr_id,
+a.title_sk,
+d.previous_title
+
+) a
+
+GROUP BY a.instr_id,a.title_sk
+  ) b
+ON a.instr_id = b.instr_id
+AND a.title_sk = b.title_sk
+/*-- group by a.instr_id;*/
+)a
+
+WHERE to_date(a.purchase_date_2) >= '2015-10-01'
+AND
+(
+(to_date(a.purchase_date_2) < '2018-03-29' AND datediff(a.bl_date,a.purchase_date_2) <= 730)
+OR(to_date(a.purchase_date_2) >= '2018-03-29' AND datediff(a.bl_date,a.purchase_date_2) <= 1825)
+)
+
+) a
+
+LEFT JOIN  lab_property_project.pty_pd_title_ownership_period aa
+ON a.title_sk = aa.title_sk
+AND a.earliest_instr_id = aa.instr_id
+
+LEFT JOIN lab_property_project.pty_pd_title_ownership_period b
+ON a.title_sk = b.title_sk
+AND a.instr_id = b.next_instr_id
+
+LEFT JOIN lab_property_project.pty_pd_title_ownership_period bb
+ON a.title_sk = bb.title_sk
+AND b.instr_id = bb.next_instr_id
+AND datediff(b.period_start,bb.period_start) < 365 /*only event within last year(mainly looking for transmissions to flag as inherited*/
+
+
+LEFT JOIN 
+(select title_sk,
+top_sk,
+MAX(num_titles_back) as previous_titles
+FROM lab_property_project.tmp_prior_title_final
+GROUP BY
+title_sk,
+top_sk
+) c
+ON a.title_sk = c.title_sk
+AND a.top_sk = c.top_sk
+
+WHERE b.event_type_sk IN(2,3) OR aa.event_type_sk IN(2,3) 
+
+) by testdb;
+
+
+
+
+
+/* ***************************************************************************************************************** */
+/* Brightline base final */
+/* ***************************************************************************************************************** */
+
+
+execute
+(CREATE TABLE BRIGHTLINE_BASE_FN STORED AS PARQUET AS
+
+select a.*,
+CASE WHEN to_date(a.SALE_SETTLEMENT_DATE) between '2008-04-01' AND '2009-03-31' THEN '2009'
+WHEN to_date(a.SALE_SETTLEMENT_DATE) between '2009-04-01' AND '2010-03-31' THEN '2010'
+WHEN to_date(a.SALE_SETTLEMENT_DATE) between '2010-04-01' AND '2011-03-31' THEN '2011'
+WHEN to_date(a.SALE_SETTLEMENT_DATE) between '2011-04-01' AND '2012-03-31' THEN '2012'
+WHEN to_date(a.SALE_SETTLEMENT_DATE) between '2012-04-01' AND '2013-03-31' THEN '2013'
+WHEN to_date(a.SALE_SETTLEMENT_DATE) between '2013-04-01' AND '2014-03-31' THEN '2014'
+WHEN to_date(a.SALE_SETTLEMENT_DATE) between '2014-04-01' AND '2015-03-31' THEN '2015'
+WHEN to_date(a.SALE_SETTLEMENT_DATE) between '2015-04-01' AND '2016-03-31' THEN '2016'
+WHEN to_date(a.SALE_SETTLEMENT_DATE) between '2016-04-01' AND '2017-03-31' THEN '2017'
+WHEN to_date(a.SALE_SETTLEMENT_DATE) between '2017-04-01' AND '2018-03-31' THEN '2018'
+WHEN to_date(a.SALE_SETTLEMENT_DATE) between '2018-04-01' AND '2019-03-31' THEN '2019'
+WHEN to_date(a.SALE_SETTLEMENT_DATE) between '2019-04-01' AND '2020-03-31' THEN '2020'
+END AS TAX_YEAR
+
+FROM
+(
+SELECT 
+a.title_no,
+a.party_names,
+a.purchase_date as owner_start,
+CASE WHEN bb.sale_date_2 IS NOT NULL AND bb.sale_date_2 > a.purchase_date_2 THEN to_date(bb.sale_date_2) ELSE to_date(a.BL_DATE) END AS BL_DATE,
+a.sale_settlement_date,
+a.sale_date,
+CASE WHEN b.sale_price IS NOT NULL THEN b.sale_price ELSE bb.sale_price_2 END AS sale_price,
+d.purchase_date,
+d.purchase_price,
+a.exemption_code,
+a.transfer_type,
+a.num_parties,
+a.IR_entity_type,
+a.address,
+a.suburb,
+a.town,
+a.postcode,
+a.area_region,
+a.instr_id,
+a.title_sk,
+a.top_sk,
+a.land_zone_desc,
+a.land_use_desc,
+a.maori_land,
+/* -- a.memorial_id, */
+/* -- CASE WHEN a.purchase_date = a.title_issued THEN 'Y' ELSE 'N' END AS FIRST_OWNER, */
+a.previous_titles,
+CASE WHEN a.prev_event IN(4,30) THEN 'Y' ELSE 'N' END AS INHERITED_FLAG,
+CASE
+ WHEN a.exemption_code LIKE '%EXAD%' THEN 'Executor'
+ WHEN a.party_names LIKE '%Executor%' THEN 'Executor' /*some excecutor sales don't put in exemption*/
+ WHEN a.exemption_code LIKE '%XCON%' THEN 'Executor'
+ WHEN a.exemption_code LIKE '%TA%' THEN 'Local Auth'
+ WHEN a.exemption_code LIKE '%XTRT%' THEN 'Treaty Settlement'
+ WHEN a.exemption_code LIKE '%XMRL%' THEN 'Maori Land'
+ WHEN a.exemption_code LIKE '%HMQ%' THEN 'Public Auth'
+ WHEN a.exemption_code LIKE '%HOME%' THEN 'Main Home'
+ WHEN a.exemption_code LIKE '%MORT%' THEN 'Mortgagee Sale'
+ END AS EXEMPTION
+
+/* -- CASE WHEN c.nbr_titles > 1 THEN 'Y' ELSE 'N' END AS Subdivide_flag  */
+ 
+FROM lab_property_project.BRIGHTLINE_BASE_3 a
+
+/* -- Joining to pd_sale to get sale_price */
+LEFT JOIN 
+(
+select 
+a.instr_id,
+a.title_sk,
+/* -- to_date(max(b.sale_date)) as sale_date_2, */
+max(b.SALE_PRICE_GROSS) as sale_price
+FROM lab_property_project.BRIGHTLINE_BASE_3 a
+JOIN lab_property_project.pty_pd_sale b
+ON a.title_sk = b.title_sk
+AND to_date(a.sale_settlement_date) = to_date(b.sale_date)
+
+GROUP BY
+a.instr_id,
+a.title_sk
+) b
+ON a.title_sk = b.title_sk
+AND a.instr_id = b.instr_id
+
+/*Further sale date/price information for those sales where previouslt not identified ( based on where sale date is within 30 days of settlement)*/
+LEFT JOIN 
+(
+select 
+a.instr_id,
+a.title_sk,
+to_date(max(b.sale_date)) as sale_date_2,
+max(b.SALE_PRICE_GROSS) as sale_price_2
+FROM lab_property_project.BRIGHTLINE_BASE_3 a
+JOIN lab_property_project.pty_pd_sale b
+ON a.title_sk = b.title_sk
+
+WHERE datediff(b.sale_date,a.sale_settlement_date) BETWEEN 0 and 30
+AND a.sale_date IS NULL
+
+GROUP BY
+a.instr_id,
+a.title_sk
+) bb
+ON a.title_sk = bb.title_sk
+AND a.instr_id = bb.instr_id
+
+/*Count of title per intrument number - more than 1 indicates a subdivided property*/
+LEFT JOIN 
+(select instr_id,
+count(title_sk) as nbr_titles
+FROM lab_property_project.BRIGHTLINE_BASE_3
+GROUP BY 
+instr_id
+)c
+ON a.instr_id = c.instr_id
+
+/*Obtain purchase price where available - based on where sale date is within 30 days of settlement date*/
+LEFT JOIN
+(
+select  
+a.instr_id,
+a.title_sk,
+a.orig_settlement_date,
+max(c.SALE_PRICE_GROSS) as purchase_price,
+max(to_date(b.sale_date)) as purchase_date
+FROM lab_property_project.BRIGHTLINE_BASE_3 a
+
+LEFT JOIN lab_property_project.pty_pd_sale b
+ON a.title_sk = b.title_sk
+and datediff(b.sale_date,a.orig_settlement_date) BETWEEN 0 and 30
+LEFT JOIN lab_property_project.pty_pd_sale c
+ON b.title_sk = c.title_sk
+AND b.sale_date = c.sale_date
+
+GROUP BY
+a.instr_id,
+a.title_sk,
+a.orig_settlement_date
+
+) d
+ON a.instr_id = d.instr_id
+AND a.title_sk = d.title_sk
+
+)a
+) by testdb;
+
+execute(drop table IF EXISTS lab_property_project.BL_BUILD_COSTS purge) by testdb;
+execute
+(CREATE TABLE lab_property_project.BL_BUILD_COSTS STORED AS PARQUET AS
+/* -- BL_BUILD_COSTS */
+WITH PTY_BUILDCOSTS AS(
+ select distinct 
+c.qpid
+  , z.title_no
+  , z.title_sk
+  , z.instr_id
+  , c.floor_area as floor_area
+  , c.issue_date
+  , c.consent_id
+  , c.value_of_work
+  /* we are not doing anything with the lats and longs anymore
+  but we may as well keep them in there for possible later
+  analysis e.g. do a heat map of per sqm build costs */
+  , t.x_wgs84 as x_long
+  , t.y_wgs84 as y_lat
+  /* commenting x_10k, y_10k and cluster_id as they are not in the source table
+  currently and not likely to be used in the near or medium term */
+/*, t.x_10k*/  
+/*, t.y_10k*/
+/*, t.cluster_id*/
+FROM 
+  (select distinct title_no, title_sk, instr_id, sale_settlement_date, owner_start 
+  from brightline_base_fn
+where 1 = 1
+  and owner_start is not null
+and sale_settlement_date is not null
+and datediff(sale_settlement_date, owner_start) >= 60
+/* You cannot do a build in less than 60 days!! 
+   You have to own it long enough to reasonably incur the value_of_work costs. */
+  ) z
+ inner join cp_pty_cl_property_match m
+ on m.CT = z.title_no
+  inner join cp_pty_cl_building_consent c
+on c.qpid = m.qpid
+  left join nz_centroids t
+on TRIM(t.title_no) = TRIM(z.title_no)
+   inner join (
+ /* Consent plans get updated so we want to grab the last one. 
+ issue_date will also be forced to be the last one, without
+ having to do anything extra. */
+ select bc.qpid
+, max(bc.consent_id) as max_consent_id
+ from cp_pty_cl_building_consent bc
+/* we have problems when consents for one build spans more than one year,
+   so we ignore years.  But that exposes us to titles where more than one
+   property gets built.... sigh */
+  group by bc.qpid
+ ) c2
+  on c2.qpid = c.qpid
+and c2.max_consent_id = c.consent_id
+  where 1 = 1
+and to_date(c.issue_date) >= '01/01/2010'   
+and c.issue_date between z.owner_start and z.sale_settlement_date 
+and c.consent_type = 'New'   
+and upper(DESCRIPTION) LIKE '%DWG%'
+)
+
+select distinct b.*
+from PTY_BUILDCOSTS b
+/* Exclude any qpids with multiple titles */
+left join PTY_BUILDCOSTS x
+on x.qpid = b.qpid
+and x.title_no <> b.title_no
+/* Exclude any titles with multiple qpids */
+left join PTY_BUILDCOSTS z
+on z.title_no = b.title_no
+and z.qpid <> b.qpid
+where 1 = 1
+and x.qpid is null
+and z.title_no is null
+
+
+) by testdb;
+
+execute(drop table IF EXISTS lab_property_project.BL_LIABLE_SALES_FIXED_2 purge) by testdb;
+execute
+(CREATE TABLE lab_property_project.BL_LIABLE_SALES_FIXED_2 STORED AS PARQUET AS
+with z as (
+  select bls.instr_id
+   , bls.sale_price
+   , count(distinct bls.title_sk) as title_sk_dst_cnt
+   , avg(p.sale_price_gross) as sale_price_gross_avg
+from brightline_base_fn bls
+   left join pty_pd_sale p
+  on p.title_sk = bls.title_sk
+ and p.sale_date = bls.sale_date
+   where 1 = 1
+ and p.sale_type_code in ('M23','M33','M32','M31','M11','M13','M12','M21','M43','M22')
+group by bls.instr_id
+   , bls.sale_price
+  having count(bls.title_sk) > 1
+  ),
+/* --  y as ( */
+/* --   select z.instr_id */
+/* --   , round(z.sale_price / z.title_sk_dst_cnt, 2) as sale_price_per_pty */
+/* --   , z.sale_price as transaction_amt */
+/* --   , z.title_sk_dst_cnt as num_titles_transferred */
+/* -- from z */
+/* --   where 1 = 1 */
+/* --  and (z.sale_price - z.sale_price_gross_avg) < 1  */
+/* --   ), */
+ m as (
+   select bls.instr_id
+   , bls.party_names
+   , count(bls.title_sk) as num_titles
+  , sp.num_prices
+   , sum(bls.sale_price) as sale_price_sum
+   , avg(bls.sale_price) as sale_price_avg
+  , sd.num_sale_dates
+  , pd.num_purchase_dates
+from brightline_base_fn bls
+left JOIN 
+(select bls.instr_id
+,count(distinct bls.sale_price) as num_prices
+from brightline_base_fn bls
+group by bls.instr_id
+)sp
+on bls.instr_id = sp.instr_id
+
+left JOIN 
+(select bls.instr_id
+,count(distinct bls.sale_date) as num_sale_dates
+from brightline_base_fn bls
+group by bls.instr_id
+)sd
+on bls.instr_id = sd.instr_id
+
+left JOIN 
+(select bls.instr_id
+, count(distinct bls.purchase_date) as  num_purchase_dates
+from brightline_base_fn bls
+group by bls.instr_id
+)pd
+on bls.instr_id = pd.instr_id
+
+   where 1 = 1
+group by bls.instr_id
+   , bls.party_names
+   ,sp.num_prices
+   ,sd.num_sale_dates
+   ,pd.num_purchase_dates
+  having count(bls.title_sk) > 1
+  )
+/* --  n as ( */
+/* --   select m.instr_id */
+/* --   , m.num_titles */
+/* --   , round(m.sale_price_avg / m.num_titles, 2) as adj_sale_price */
+/* -- from m */
+/* --   where 1 = 1 */
+/* --  and num_prices = 1 */
+/* --  and (num_sale_dates + num_purchase_dates) < 3 */
+/* --  and round(m.sale_price_avg / m.num_titles, 2) > 50000 */
+/* --   )   */
+
+
+   select s.*
+, coalesce(y.sale_price_per_pty, n.adj_sale_price, s.sale_price) as sale_price_per_pty
+ from brightline_base_fn s
+left join 
+(
+  select z.instr_id
+  , round(z.sale_price / z.title_sk_dst_cnt, 2) as sale_price_per_pty
+  , z.sale_price as transaction_amt
+  , z.title_sk_dst_cnt as num_titles_transferred
+from z
+  where 1 = 1
+ and (z.sale_price - z.sale_price_gross_avg) < 1 
+)
+y
+   on y.instr_id = s.instr_id 
+left join 
+(
+  select m.instr_id
+  , m.num_titles
+  , round(m.sale_price_avg / m.num_titles, 2) as adj_sale_price
+from m
+  where 1 = 1
+ and num_prices = 1
+ and (num_sale_dates + num_purchase_dates) < 3
+ and round(m.sale_price_avg / m.num_titles, 2) > 50000
+  )  n
+   on n.instr_id = s.instr_id  
+) by testdb;
+
+execute(drop table IF EXISTS lab_property_project.pty_avg_price_cust purge) by testdb;
+execute
+(CREATE TABLE lab_property_project.pty_avg_price_cust STORED AS PARQUET AS
+select distinct a.* FROM(
+select 
+cust.ird_number
+  , cust.customer_key
+/* --   , case */
+/* -- when month(datepart(sale.sale_settlement_date)) lt 4 */
+/* -- then year(datepart(sale.sale_settlement_date)) */
+/* -- else year(datepart(sale.sale_settlement_date)) + 1 end */
+/* -- as sale_tax_year */
+  , cust.tax_year
+  , 0 as avg_known_sales_price
+  , 'N' as all_sale_prices_known
+  , 'N' as sole_seller_all_sales
+/* --   , count(distinct sale.instr_id) as num_sales */
+  , sum(case when sale.sale_price_per_pty is not null then 1 else 0 end) as num_known_sales_prices 
+  , sum(case when sale.sale_price_per_pty is not null then sale.sale_price_per_pty else 0 end) as sum_known_sales_prices
+  , sum(1/sale.NUM_PARTIES) as sum_of_sale_shares
+   from bl_customers_unique cust
+ inner join ( select distinct 
+     zz.instr_id
+    /* 
+     sale_price_per_pty is needed because we get multisales - one sale, put through under one
+     instr_id, for one price (which may or may not be known), for multiple titles (so multiple
+     title_sks).  We see a bunch of rows with duplicate instr_ids and different title_sks, but
+     the same price.  We use sale_price_per_pty to assign an even share of the "whole deal's"
+     sale price to each property, so that we can then treat these multisale rows on an equal
+     footing with "normal" rows.  These multi-sale rows are 11% of the dataset.
+      */
+       , zz.sale_price_per_pty  
+       , zz.NUM_PARTIES
+       , zz.sale_settlement_date
+    from 
+       BL_LIABLE_SALES_FIXED_2  zz
+) sale
+ on sale.instr_id = cust.instr_id
+   group by cust.ird_number
+  , cust.customer_key
+  , cust.tax_year
+/* --   , case */
+/* -- when month(datepart(sale.sale_settlement_date)) < 4 */
+/* -- then year(datepart(sale.sale_settlement_date)) */
+/* -- else year(datepart(sale.sale_settlement_date)) + 1 end */
+  , avg_known_sales_price
+  , all_sale_prices_known
+  , sole_seller_all_sales
+ )a
+) by testdb;
+
+execute(drop table IF EXISTS lab_property_project.BL_LIABLE_SALES_ME purge) by testdb;
+execute
+(CREATE TABLE lab_property_project.BL_LIABLE_SALES_ME STORED AS PARQUET AS
+  select distinct
+ x.instr_id
+ ,x.title_sk
+   /* working out adjusted_share_of_gross is complicated! */
+ , round(coalesce(x.sale_price_per_pty, greatest(1, x.sale_price_per_pty, (x.purchase_price + coalesce(b.value_of_work, 0))
+ , b.value_of_work, a.avg_known_sales_price, 200000)) / x.num_parties, 2) as adj_share_of_gross
+ , case when x.sale_price_per_pty is null then 'Y' else 'N' end as price_estimated
+, round(coalesce(b.value_of_work, 0) / x.NUM_PARTIES) as adj_share_of_build_cost
+ , (round(coalesce(x.sale_price_per_pty, greatest(1, x.sale_price_per_pty, (x.purchase_price + coalesce(b.value_of_work, 0))
+   , b.value_of_work, a.avg_known_sales_price, 200000)) / x.num_parties, 2)) -
+   (round(coalesce(b.value_of_work, 0) / x.NUM_PARTIES, 2)) as adj_share_sans_build_cost
+ , b.issue_date as build_consent_issue_date
+/* --  , round((2000 * ifn(b.floor_area eq 0, ., b.floor_area)) / x.NUM_PARTIES, 2) as adj_share_of_dflt_build_cost */
+ 
+FROM BL_LIABLE_SALES_FIXED_2 x
+
+left join  bl_customers_unique y
+ON x.instr_id = y.instr_id
+AND x.title_sk = y.title_sk
+ 
+left join BL_BUILD_COSTS b
+on b.title_sk = x.title_sk
+and x.sale_settlement_date is not null
+and b.instr_id = x.instr_id
+
+left join pty_avg_price_cust a
+on a.ird_number = y.ird_number
+and a.tax_year = y.tax_year
+
+/* ME 2019-09-11 found duplicates in TOP_SK around conveyancer and owner_start fields.  */
+/* Have given FYI to JM but advised not a blocker at this stage.  Discovered this while */
+/* working on top 200 dealer extract request (Chris Stevens, 2019-09-11 to ME).  */
+where x.top_sk not in 
+(
+     select a.top_sk from 
+     (
+     select z.top_sk, count(z.top_sk) as ct
+     from BL_LIABLE_SALES_FIXED_2 z
+     group by z.top_sk
+     having count(z.top_sk) > 1
+     )a
+)
+and (
+ x.sale_price_per_pty is null
+ or x.sale_price_per_pty < 10000000  /* there are some highly suspect values in there eg 21,212,127, 16610457 */
+)
+
+) by testdb;
+
+
+/*remove initial base tables */
+execute(drop table IF EXISTS BRIGHTLINE_BASE purge) by testdb;
+execute(drop table IF EXISTS BRIGHTLINE_BASE_2 purge) by testdb;
+execute(drop table IF EXISTS BRIGHTLINE_BASE_3 purge) by testdb;
+execute(drop table IF EXISTS BL_BUILD_COSTS purge) by testdb;
+execute(drop table IF EXISTS BL_LIABLE_SALES_FIXED_2 purge) by testdb;
+execute(drop table IF EXISTS pty_avg_price_cust purge) by testdb;
+    disconnect from testdb;
+quit;
+
+
+/*  ______   __    __   ______   ________  ______   __       __  ________  _______    ______  
+ /      \ /  |  /  | /      \ /        |/      \ /  \     /  |/        |/       \  /      \ 
+/$$$$$$  |$$ |  $$ |/$$$$$$  |$$$$$$$$//$$$$$$  |$$  \   /$$ |$$$$$$$$/ $$$$$$$  |/$$$$$$  |
+$$ |  $$/ $$ |  $$ |$$ \__$$/    $$ |  $$ |  $$ |$$$  \ /$$$ |$$ |__    $$ |__$$ |$$ \__$$/ 
+$$ |      $$ |  $$ |$$      \    $$ |  $$ |  $$ |$$$$  /$$$$ |$$    |   $$    $$< $$      \ 
+$$ |   __ $$ |  $$ | $$$$$$  |   $$ |  $$ |  $$ |$$ $$ $$/$$ |$$$$$/    $$$$$$$  | $$$$$$  |
+$$ \__/  |$$ \__$$ |/  \__$$ |   $$ |  $$ \__$$ |$$ |$$$/ $$ |$$ |_____ $$ |  $$ |/  \__$$ |
+$$    $$/ $$    $$/ $$    $$/    $$ |  $$    $$/ $$ | $/  $$ |$$       |$$ |  $$ |$$    $$/ 
+ $$$$$$/   $$$$$$/   $$$$$$/     $$/    $$$$$$/  $$/      $$/ $$$$$$$$/ $$/   $$/  $$$$$$/  
+*/                                                                                            
+                                                                                            
+                                                                                            
+
+
+/***********************************************************************/
+/* Identify Customers from tax statements */
+/***********************************************************************/
+proc sql;
+connect to impala as testdb (dsn=cloudera_impala /*schema=lab_property_project*/);
+execute(drop table IF EXISTS lab_property_project.BRIGHTLINE_CUSTOMERS purge) by testdb;
+
+execute
+(CREATE TABLE lab_property_project.BRIGHTLINE_CUSTOMERS STORED AS PARQUET AS
+
+select 
+   a.tax_stmt_id,
+a.statement_date,
+a.ird_number,
+a.full_name,
+/*LISTAGG(a.full_name,',') WITHIN GROUP (ORDER BY a.full_name)as names,*/
+a.ir_entity_type,
+CASE WHEN a.ir_entity_type = 'I' THEN 'Individual'
+ WHEN a.ir_entity_type = 'C' THEN 'Company'
+ WHEN a.ir_entity_type = 'T' THEN 'Trust'
+ WHEN a.ir_entity_type = 'P' THEN 'Partnership'
+ WHEN a.ir_entity_type = 'M' THEN 'Maori Authority'
+ WHEN a.ir_entity_type = 'S' THEN 'Society'
+ WHEN a.ir_entity_type = 'F' THEN 'Fund'
+ WHEN a.ir_entity_type = 'G' THEN 'Govt Dept'
+ WHEN a.ir_entity_type = 'U' THEN 'Unit Trust'
+ 
+ ELSE 'Unknown' END AS Entity,
+a.exemption_code,
+a.certifier_firm,
+b.instr_id,
+b.title_no,
+b.title_sk,
+b.Land_zone_desc,
+b.land_use_desc,
+/* -- b.first_owner, */
+b.inherited_flag,
+b.bl_date,
+b.owner_start,
+b.tax_year,
+b.num_parties,
+/*- c.num_ts_sale*/
+/*  count(a.ird_number) as num_sales*/
+count(c.ird_number) as num_valid_TS
+FROM  lab_property_project.PTY_PD_TAX_STMT  a
+JOIN lab_property_project.brightline_base_fn b
+ON a.instr_id = b.instr_id
+
+
+LEFT JOIN(
+select distinct
+a.instr_id,
+b.tax_stmt_id,
+/*count(distinct NVL(b.ird_number,0)) as num_ts_sale*/
+b.ird_number
+FROM lab_property_project.brightline_base_fn a
+JOIN lab_property_project.PTY_PD_TAX_STMT b
+ON a.instr_id = b.instr_id
+WHERE b.TRANSFEROR_OR_TRANSFEREE = 'TTOR'
+AND b.tax_stmt_status = 'CURR'
+AND ird_number > 0
+
+/*GROUP BY a.instr_id*/
+)c
+ON a.instr_id = c.instr_id
+
+WHERE a.TRANSFEROR_OR_TRANSFEREE = 'TTOR'
+AND a.tax_stmt_status = 'CURR'
+/*AND b.exemption IS NULL*/
+/*AND b.maori_land = 'N'*/
+/*AND b.instr_id = 14205363*/
+
+GROUP BY
+   a.tax_stmt_id,
+a.statement_date,
+a.ird_number,
+a.full_name,
+/*LISTAGG(a.full_name,',') WITHIN GROUP (ORDER BY a.full_name)as names,*/
+a.ir_entity_type,
+a.exemption_code,
+a.certifier_firm,
+b.instr_id,
+b.title_no,
+b.title_sk,
+b.Land_zone_desc,
+b.land_use_desc,
+/* -- b.first_owner, */
+b.inherited_flag,
+b.bl_date,
+b.owner_start,
+b.tax_year,
+b.num_parties
+/* -- c.ird_number */
+
+) by testdb;
+
+
+
+
+
+/*****************************************************/
+/* Brightline Customers Unique */
+/*****************************************************/
+
+execute(drop table IF EXISTS lab_property_project.BL_CUSTOMERS_UNIQUE purge) by testdb;
+
+execute
+(CREATE TABLE lab_property_project.BL_CUSTOMERS_UNIQUE STORED AS PARQUET AS
+
+select
+a.ird_number,
+aa.flngcustomerkey as customer_key,
+/* -- LISTAGG(full_name,',') WITHIN GROUP (ORDER BY full_name)as TS_Names, */
+group_concat(a.full_name,',') as TS_Names,
+a.ir_entity_type,
+a.entity,
+a.instr_id,
+a.title_sk,
+a.tax_year,
+a.BL_DATE,
+a.certifier_firm
+
+
+
+FROM (
+select distinct 
+ a.ird_number,
+ a.full_name,
+ a.ir_entity_type,
+ a.entity,
+ a.instr_id,
+ a.title_sk,
+ a.tax_year,
+ a.BL_DATE,
+ a.certifier_firm
+ 
+ FROM 
+ (select distinct 
+ ird_number,
+ full_name,
+ ir_entity_type,
+ entity,
+ num_parties,
+num_valid_ts,
+instr_id,
+title_sk,
+ tax_year,
+ BL_DATE,
+ certifier_firm
+ 
+ FROM lab_property_project.BRIGHTLINE_CUSTOMERS   
+ WHERE num_parties = num_valid_ts
+ )a
+
+ )a
+ 
+ 
+/* -- Need to fetch customer_key to join to start data */
+LEFT JOIN prod_raw_restricted_access.app_tblid aa
+ON a.ird_number = cast(aa.fstrid as int)
+AND aa.fstridtype = 'IRD'
+/* -- AND aa.fblnvalidated =1 */
+and aa.fblnactive = 1
+and aa.record_active_flag = 'Y' 
+and aa.record_deleted_flag = 'N'
+
+ GROUP BY
+a.ird_number,
+aa.flngcustomerkey,
+/* -- full_name, */
+a.ir_entity_type,
+a.entity,
+ a.instr_id,
+ a.title_sk,
+ a.tax_year,
+ a.BL_DATE,
+ a.certifier_firm
+
+) by testdb;
+disconnect from testdb;
+quit;
+
+
+/* **************************************** */
+/* Brightline Customer Details */
+/* **************************************** */
+
+/* Getting overseas data from DAUR team exclusions dataset */
+proc sql;
+connect to impala as testdb (dsn=cloudera_impala schema=lab_property_project);
+execute(drop table IF EXISTS overseas purge) by testdb;
+disconnect from testdb;
+quit;
+
+data huehive.overseas(keep=irdnumber specialtaxresidency addressstatusoverseas);
+set public.all_exclusions;
+WHERE specialtaxresidency = 1
+OR addressstatusoverseas = 'Y';
+run;
+
+proc sql;
+connect to impala as testdb (dsn=cloudera_impala /*schema=lab_property_project*/);
+execute(drop table IF EXISTS lab_property_project.BL_CUSTOMER_DETAILS purge) by testdb;
+
+execute
+(CREATE TABLE lab_property_project.BL_CUSTOMER_DETAILS STORED AS PARQUET AS
+
+select DISTINCT 
+a.instr_id,
+a.tax_year,
+a.bl_date,
+a.title_sk,
+a.certifier_firm,
+a.ird_number,
+a.customer_key,
+CASE WHEN b.party_ceased_flag = 'Y' THEN 'Other' ELSE 'A' end as customer_status,
+b.Legal_name,
+CASE WHEN b.Legal_name<>b.Trading_Name THEN b.Trading_Name END AS trade_name,
+/* -- k.Agent_Name, */
+/*--d.Preferred_Name,*/
+b.BIC_CODE AS ANSIC_CODE,
+b.bic_desc as ANSIC_desc,
+CASE WHEN f.customer_key IS NOT NULL THEN 'Y' ELSE 'N' END AS SHR_DEV_FLAG,
+CASE WHEN g.customer_key IS NOT NULL THEN 'Y' ELSE 'N' END AS SHR_BLD_FLAG,
+CASE WHEN i.customer_key IS NOT NULL THEN 'Y' ELSE 'N' END AS TAX_EXEMPTION,
+CASE WHEN j.customer_key IS NOT NULL THEN 'Y' ELSE 'N' END AS LE_SE,
+b.party_segment AS CustomerSegment,
+b.party_subtype AS EntityType,
+b.party_subtype_code as EntityTypecode,
+b.party_class_code as EntityClass,
+(year(current_timestamp()) - year(b.party_start_date) 
+   +case when month(b.party_start_date) > month(current_timestamp()) then -1
+         when month(b.party_start_date) = month(current_timestamp()) and day(b.party_start_date) > day(current_timestamp()) then -1
+         else 0 
+     end) as ageentity,
+round(k.incometotalgross,0) as total_income,
+CASE WHEN a.customer_key IS NULL THEN ''
+     WHEN l.specialtaxresidency = 1  THEN 'N' ELSE 'Y' END AS RESIDENT,
+CASE WHEN a.customer_key IS NULL THEN ''
+          WHEN addressstatusoverseas = 'Y' THEN 'Y' ELSE 'N' END AS OVERSEAS
+
+
+ 
+FROM lab_property_project.BL_CUSTOMERS_UNIQUE a
+
+LEFT JOIN prod_refined_restricted_access.party_dim b
+ON a.customer_key = cast(b.customer_key as int)
+AND b.record_active_flag = 'Y'
+
+
+/*--identify customers with shareholdings in property development companies*/
+LEFT JOIN 
+(
+select distinct a.customer_key
+FROM lab_property_project.BL_CUSTOMERS_UNIQUE a
+
+JOIN prod_raw_restricted_access.app_tbllink b
+ON a.customer_key = b.flngtocustomerkey
+AND b.record_active_flag = 'Y' 
+AND b.record_deleted_flag = 'N'
+AND b.fdtmcease = '9999-12-31 00:00:00'/*NULL*/
+AND b.fstrLINKTYPE = 'SHRHLD'
+
+JOIN prod_raw_restricted_access.app_tblnaics c
+ON b.flngfromcustomerkey = c.flngcustomerkey
+AND c.record_active_flag = 'Y' 
+AND c.record_deleted_flag = 'N'
+and c.fintprofilenumber = 1 
+AND c.fdtmcease = '9999-12-31 00:00:00'/*NULL*/
+AND c.fblnactive = 1
+WHERE c.fstrNAICS IN('L671180', 'L671237','E321110', 'E321120','M692310')
+)f
+ON a.customer_key = f.customer_key
+
+/*--identify customers with shareholdings in building companies*/
+LEFT JOIN 
+(
+select distinct a.customer_key
+FROM lab_property_project.BL_CUSTOMERS_UNIQUE a
+
+JOIN prod_raw_restricted_access.app_tbllink b
+ON a.customer_key = b.flngtocustomerkey
+AND b.record_active_flag = 'Y' 
+AND b.record_deleted_flag = 'N'
+AND b.fdtmcease = '9999-12-31 00:00:00'/*NULL*/
+AND b.fstrLINKTYPE = 'SHRHLD'
+
+JOIN prod_raw_restricted_access.app_tblnaics c
+ON b.flngfromcustomerkey = c.flngcustomerkey
+AND c.record_active_flag = 'Y' 
+AND c.record_deleted_flag = 'N'
+and c.fintprofilenumber = 1 
+AND c.fdtmcease = '9999-12-31 00:00:00'/*NULL*/
+AND c.fblnactive = 1
+WHERE c.fstrNAICS IN('L671205','L671210','E302010','L671120','E301910','E301120','E301130','E324220','E329920','E301920')
+)g
+ON a.customer_key = g.customer_key
+
+LEFT JOIN
+(
+select distinct
+a.customer_key,
+b.flngdockey,
+c.fstrcustomersegment,
+c.fstrcustomerclass,
+b.fstrcustomertype,
+c.fstrcustomersubtype,
+c.fstrcustomersubtypeclass
+
+FROM lab_property_project.BL_CUSTOMERS_UNIQUE a
+JOIN prod_raw_restricted_access.app_tblcustomerinfo  b
+ON a.customer_key = b.flngcustomerkey
+AND b.record_active_flag = 'Y' 
+AND b.record_deleted_flag = 'N'
+JOIN prod_raw_restricted_access.app_tblnz_customerstd c
+ON b.flngdockey = c.flngdockey 
+AND c.record_active_flag = 'Y'
+AND c.record_deleted_flag = 'N'
+
+)h
+ON a.customer_key = h.customer_key
+
+
+/*Tax exemptions*/
+LEFT JOIN 
+(
+
+select distinct a.customer_key
+FROM lab_property_project.BL_CUSTOMERS_UNIQUE a 
+JOIN prod_raw_restricted_access.app_tblindicator b
+ON a.customer_key = b.flngcustomerkey
+AND b.record_active_flag = 'Y' 
+AND b.record_deleted_flag = 'N'
+AND b.fstrindicator = 'RWTEXM'
+)i
+ON a.customer_key = i.customer_key
+
+
+
+/*Amalgamated companies*/
+LEFT JOIN 
+(
+
+select distinct a.customer_key
+FROM lab_property_project.BL_CUSTOMERS_UNIQUE a 
+JOIN prod_raw_restricted_access.app_tblindicator b
+ON a.customer_key = b.flngcustomerkey
+AND b.record_active_flag = 'Y' 
+AND b.record_deleted_flag = 'N'
+AND b.fstrindicator IN('REPCON','MBRCON','GRPCON','AMLGMG','AMLGMD','SIGENT','SEGSIG','LRGENT')
+)j
+ON a.customer_key = j.customer_key
+
+/* -- income(imported from SAS eg overnight tables) */
+LEFT JOIN lab_property_project.income k
+ON a.ird_number = k.ird_number 
+
+/* -- resident or overseas(from "all_exclusions" table imported by daur team */
+left join lab_property_project.overseas l
+on a.ird_number = l.irdnumber
+
+) by testdb;
+    disconnect from testdb;
+quit;
+
+
+
+
+/*_____      _                          _____        _        
+|  __ \    | |                        |  __ \      | |       
+| |__) |___| |_ _   _ _ __ _ __  ___  | |  | | __ _| |_ __ _ 
+|  _  // _ \ __| | | | '__| '_ \/ __| | |  | |/ _` | __/ _` |
+| | \ \  __/ |_| |_| | |  | | | \__ \ | |__| | (_| | || (_| |
+|_|  \_\___|\__|\__,_|_|  |_| |_|___/ |_____/ \__,_|\__\__,_|
+*/
+proc sql;
+connect to impala as testdb (dsn=cloudera_impala );
+execute(drop table IF EXISTS lab_property_project.IR10_FINANCIALS purge) by testdb;
+
+execute( create table lab_property_project.IR10_FINANCIALS as
+select distinct a.*
+FROM(
+/* -- START */
+select distinct
+cust.customer_key,
+cust.ird_number,
+ret.doc_ver as filing_period,
+round(coalesce(a.fcurgrosssales,0),0) as gross_sales,
+round(coalesce(a.fcurgoodspurchases,0),0) as purchases,
+round(coalesce(a.fcurgoodsopeningstock,0),0) as opening_stock,
+round(coalesce(a.fcurgoodsclosingstock,0),0) as closing_stock,
+round(coalesce(a.fcurotherincome,0),0) as other_income
+
+
+FROM lab_property_project.app_tblnz_rtnfinanstmts a
+join prod_raw_restricted_access.app_tbldocsetdoc b
+ON a.flngdockey = b.flngdockey
+and b.record_active_flag = 'Y'
+and b.record_deleted_flag = 'N'
+and b.fstrdoc = 'FinStatement'
+
+    inner join( 
+         select c.flngcustomerkey as customer_key,
+          cast(a.fintdocver as string) as doc_ver,
+          a.fi64docsetkey as doc_set_key
+          FROM prod_raw_restricted_access.app_tblreturn a
+          JOIN prod_raw_restricted_access.app_tblaccount b
+          ON a.flngaccountkey = b.flngaccountkey
+          AND a.record_active_flag = 'Y' AND a.record_deleted_flag = 'N' AND b.record_active_flag = 'Y' AND b.record_deleted_flag = 'N'
+          JOIN prod_raw_restricted_access.app_tblcustomer c
+          ON b.flngcustomerkey = c.flngcustomerkey
+          AND c.record_active_flag = 'Y' AND c.record_deleted_flag = 'N'
+          ) ret
+          on b.fi64docsetkey = ret.doc_set_key
+join lab_property_project.bl_customers_unique cust
+on ret.customer_key = cust.customer_key
+and cust.tax_year = cast(ret.doc_ver as string)
+
+UNION
+/* -- FIRST */
+select distinct 
+cust.customer_key,
+cust.ird_number,
+left((to_date(a.return_period_date)),4) as filing_period,
+round(coalesce(a.sales_service_i_p_1305,0),0) as gross_sales,
+round(coalesce(a.purchases_i_p__709,0),0) as purchases,
+round(coalesce(a.opening_stock_i_p_100002,0),0) as opening_stock,
+round(coalesce(a.closing_stock_i_p_100003,0),0) as closing_stock,
+round(coalesce(a.other_income_827,0),0) as other_income
+
+FROM lab_property_project.bl_customers_unique cust 
+JOIN lab_property_project.dss_returns_attachments_ir10 a
+ON a.ird_number = cust.ird_number
+and cust.tax_year = left((to_date(a.return_period_date)),4)
+AND a.record_active_flag = 'Y'
+AND a.record_deleted_flag = 'N'
+)a
+ )by testdb;
+
+
+
+/* IR833 details  */
+execute(drop table IF EXISTS lab_property_project.IR833_DETAILS purge) by testdb;
+
+execute( create table lab_property_project.IR833_DETAILS as
+
+select distinct a.*
+FROM(
+select
+cast(aa.fstrid as int) as ird_number,
+d.flngcustomerkey as customer_key,
+/* -- a.fstrpropertytitlenumber as title_no, */
+REGEXP_REPLACE(a.fstrpropertytitlenumber, '^0*', '')  as title_no, /*removing leading zeros from title number, for some reason many seems to come with LOTS of leading zeros*/
+/* -- ucase(concat_ws(' ',coalesce(a.fstraddressline1,''),coalesce(a.fstraddressline2,'')))  as address, */
+round(coalesce(a.fcursaleprice, 0),0)         as sale_price,
+round(coalesce(a.fcurnetprofitloss, 0),0)      as net_profit_loss,
+CASE WHEN a.fdblpercentageownership between 0 AND 1 THEN round((a.fdblpercentageownership*100),0)/*making percentage ownership a whole number and consistent(some forms have 0.5, others have 50 etc*/
+     WHEN a.fdblpercentageownership = 0 THEN 100/*making an assumption that is ownership% is 0 then it is actually 100% */
+     else round(coalesce(a.fdblpercentageownership, 100),0) end as percentage_ownership, 
+/* -- round(coalesce(a.fcurshareofnetprofitloss, 0),0)      as share_of_net_profit_loss,  */
+CASE WHEN a.fdblpercentageownership = 0 THEN round(a.fcurnetprofitloss,0) 
+     WHEN a.fdblpercentageownership between 0 AND 1 THEN round(a.fcurnetprofitloss*a.fdblpercentageownership,0)
+     ELSE round(coalesce(a.fcurnetprofitloss*(a.fdblpercentageownership/100),0),0) end as share_of_net_profit_loss, /*there is a share of net profit field in start table but it is not calculated correctly*/
+left(to_date(c.fdtmfilingperiod),4) as filing_period
+
+
+from lab_fcp_raw_restricted_access.app_tblnz_rtnpropertysale a
+
+join prod_raw_restricted_access.app_tbldocsetdoc b
+on a.flngdockey = b.flngdockey
+and b.record_active_flag = 'Y'
+and b.record_deleted_flag = 'N'
+
+join prod_raw_restricted_access.app_tblreturn c
+ON b.fi64docsetkey = c.fi64docsetkey
+and b.flngver = c.flngver
+and c.record_active_flag = 'Y'
+and c.record_deleted_flag = 'N'
+
+
+join prod_raw_restricted_access.app_tblaccount d /*connect to accounts to get customer key!*/
+ON c.flngaccountkey = d.flngaccountkey
+and d.record_active_flag = 'Y'
+and d.record_deleted_flag = 'N'
+
+LEFT JOIN prod_raw_restricted_access.app_tblid aa
+ON d.flngcustomerkey = aa.flngcustomerkey
+AND aa.fstridtype = 'IRD'
+/* -- AND aa.fblnvalidated =1 */
+and aa.fblnactive = 1
+and aa.record_active_flag = 'Y' 
+and aa.record_deleted_flag = 'N'
+)a
+
+
+/* -- Getting FIRST IR833 data only if it doesn't already exist in START */
+UNION
+
+select distinct a.*
+
+
+FROM
+
+(
+select a.ird_number,
+aa.flngcustomerkey as customer_key,
+REGEXP_REPLACE(TRIM(CONCAT_WS(' ',coalesce(a.property_title_number_1,''),coalesce(a.property_title_number_2,''),coalesce(a.property_title_number_3,''))), '^0*', '')  as title_no,
+/* -- ucase(CONCAT(coalesce(a.property_address_1,''),coalesce(a.property_address_2,''),coalesce(a.property_address_3,''),coalesce(a.property_address_4,''),coalesce(a.property_address_5,''))) as address, */
+round(coalesce(a.sale_price, 0),0)         as sale_price,
+round(coalesce(a.total_net_profit_loss, 0),0)      as net_profit_loss,
+CASE WHEN a.percent_ownership = 0 THEN 100 
+     WHEN a.percent_ownership between 0 AND 1 THEN round((a.percent_ownership*100),0)
+     else round(coalesce(a.percent_ownership, 100),0) end as percentage_ownership,
+CASE WHEN a.percent_ownership = 0 THEN round(a.total_net_profit_loss,0)
+     WHEN a.percent_ownership between 0 AND 1 THEN round(a.total_net_profit_loss*a.percent_ownership,0)
+     ELSE round(coalesce(a.total_net_profit_loss*(a.percent_ownership/100),0),0) end as share_of_net_profit_loss, 
+left(to_date(a.return_period_date),4) as filing_period
+
+FROM lab_property_project.dss_rtn_attachments_ir833 a
+LEFT JOIN prod_raw_restricted_access.app_tblid aa
+ON a.ird_number = cast(aa.fstrid as int)
+AND aa.fstridtype = 'IRD'
+/* -- AND aa.fblnvalidated =1 */
+and aa.fblnactive = 1
+and aa.record_active_flag = 'Y' 
+and aa.record_deleted_flag = 'N'
+
+
+)a
+
+LEFT JOIN 
+(
+select
+cast(aa.fstrid as int) as ird_number,
+d.flngcustomerkey as customer_key,
+/* -- a.fstrpropertytitlenumber as title_no, */
+REGEXP_REPLACE(a.fstrpropertytitlenumber, '^0*', '')  as title_no,
+/* -- ucase(concat_ws(' ',coalesce(a.fstraddressline1,''),coalesce(a.fstraddressline2,'')))  as address, */
+round(coalesce(a.fcursaleprice, 0),0)         as sale_price,
+round(coalesce(a.fcurnetprofitloss, 0),0)      as net_profit_loss,
+CASE WHEN a.fdblpercentageownership between 0 AND 1 THEN round((a.fdblpercentageownership*100),0)
+     WHEN a.fdblpercentageownership = 0 THEN 100
+     else round(coalesce(a.fdblpercentageownership, 100),0) end as percentage_ownership,
+/* -- round(coalesce(a.fcurshareofnetprofitloss, 0),0)      as share_of_net_profit_loss,  */
+CASE WHEN a.fdblpercentageownership = 0 THEN round(a.fcurnetprofitloss,0)
+     WHEN a.fdblpercentageownership between 0 AND 1 THEN round(a.fcurnetprofitloss*a.fdblpercentageownership,0)
+     ELSE round(coalesce(a.fcurnetprofitloss*(a.fdblpercentageownership/100),0),0) end as share_of_net_profit_loss, 
+to_date(c.fdtmfilingperiod) as filing_period
+
+
+from lab_fcp_raw_restricted_access.app_tblnz_rtnpropertysale a
+
+join prod_raw_restricted_access.app_tbldocsetdoc b
+on a.flngdockey = b.flngdockey
+and b.record_active_flag = 'Y'
+and b.record_deleted_flag = 'N'
+
+join prod_raw_restricted_access.app_tblreturn c
+ON b.fi64docsetkey = c.fi64docsetkey
+and b.flngver = c.flngver
+and c.record_active_flag = 'Y'
+and c.record_deleted_flag = 'N'
+
+
+join prod_raw_restricted_access.app_tblaccount d
+ON c.flngaccountkey = d.flngaccountkey
+and d.record_active_flag = 'Y'
+and d.record_deleted_flag = 'N'
+
+LEFT JOIN prod_raw_restricted_access.app_tblid aa
+ON d.flngcustomerkey = aa.flngcustomerkey
+AND aa.fstridtype = 'IRD'
+/* -- AND aa.fblnvalidated =1 */
+and aa.fblnactive = 1
+and aa.record_active_flag = 'Y' 
+and aa.record_deleted_flag = 'N'
+)b
+
+ON a.ird_number = b.ird_number
+AND a.filing_period = b.filing_period
+where b.ird_NUMBER IS NULL
+)by testdb;
+
+
+/* ************************************************** */
+/* INC returns data */
+/* ************************************************** */
+execute(drop table IF EXISTS lab_property_project.sellers_all_returns purge) by testdb;
+execute
+(CREATE TABLE lab_property_project.sellers_all_returns STORED AS PARQUET AS
+
+WITH
+START as
+(
+
+/* -- START */
+select distinct
+e.customer_key,
+e.ird_number,
+left(to_date(c.fdtmfilingperiod),4) as filing_period,
+a.gross_income,
+a.other_income,
+a.return_type
+
+FROM
+
+
+(
+/* -- individuals */
+select distinct
+a.flngdockey as doc_key,
+round(coalesce(a.fcurtotalincome,0),0) as gross_income,
+round(coalesce(a.fcurtotalothernetincome,0),0) as other_income,
+'IR3' as return_type
+
+FROM prod_raw_restricted_access.app_tblnz_rtniit a
+
+join prod_raw_restricted_access.app_tbldocsetdoc b
+on a.flngdockey = b.flngdockey
+and b.record_active_flag = 'Y'
+and b.record_deleted_flag = 'N'
+
+
+/*
+UNION
+-- individuals - non resident(awaiting ingestion)
+select distinct
+a.flngdockey as doc_key,
+round(coalesce(a.fcurtotalincome,0),0) as gross_incatt
+round(coalesce(a.fcurtotalothernetincome,0),0) as other_income,
+'IR3NR' as return_type
+
+FROM app_tblnz_rtniitnr a
+
+join app_tbldocsetdoc b
+on a.flngdockey = b.flngdockey
+and b.record_active_flag = 'Y'
+and b.record_deleted_flag = 'N'
+
+*/
+
+/* -- clubs/societies */
+UNION 
+select distinct
+a.flngdockey as doc_key,
+round(coalesce(a.fcurothertotalincome,0),0) as gross_income,
+round(coalesce(a.fcurotherotherincome,0),0) as other_income,
+'IR9' as return_type
+
+FROM lab_fcp_raw_restricted_access.app_tblnz_rtnnitclb a
+
+join prod_raw_restricted_access.app_tbldocsetdoc b
+on a.flngdockey = b.flngdockey
+and b.record_active_flag = 'Y'
+and b.record_deleted_flag = 'N'
+
+
+/* -- trusts/estates */
+UNION 
+select distinct
+a.flngdockey as doc_key,
+round(coalesce(a.fcurtotalincome,0),0) as gross_income,
+round(coalesce(a.fcurtotalotherincome,0),0) as other_income,
+'IR6' as return_type
+
+FROM lab_fcp_raw_restricted_access.app_tblnz_rtnnitest a
+
+join prod_raw_restricted_access.app_tbldocsetdoc b
+on a.flngdockey = b.flngdockey
+and b.record_active_flag = 'Y'
+and b.record_deleted_flag = 'N'
+
+/* --partnerships */
+UNION 
+select distinct
+a.flngdockey as doc_key,
+round(coalesce(a.fcurtotalincome,0),0) as gross_income,
+round(coalesce(a.fcurtotalotherincome,0),0) as other_income,
+'IR7' as return_type
+
+FROM lab_fcp_raw_restricted_access.app_tblnz_rtnnitprt a
+
+join prod_raw_restricted_access.app_tbldocsetdoc b
+on a.flngdockey = b.flngdockey
+and b.record_active_flag = 'Y'
+and b.record_deleted_flag = 'N'
+
+
+/* --partnerships attributed */
+/* -- UNION  */
+/* -- select distinct */
+/* -- a.flngdockey as doc_key, */
+/* -- round(coalesce(a.fcurownertotalincome,0),0) as gross_income, */
+/* -- round(coalesce(a.fcurownerotherincome,0),0) as other_income, */
+/* -- 'IR7P' as return_type */
+/*  */
+/* -- FROM app_tblnz_rtnnitprtattrl a */
+/*  */
+/* -- join app_tbldocsetdoc b */
+/* -- on a.flngdockey = b.flngdockey */
+/* -- and b.record_active_flag = 'Y' */
+/* -- and b.record_deleted_flag = 'N' */
+
+/* --maori auth */
+UNION 
+select distinct
+a.flngdockey as doc_key,
+round(coalesce(a.fcurtotalincome,0),0) as gross_income,
+round(coalesce(a.fcurotherincome,0),0) as other_income,
+'IR8' as return_type
+
+FROM lab_fcp_raw_restricted_access.app_tblnz_rtnnitma a
+
+join prod_raw_restricted_access.app_tbldocsetdoc b
+on a.flngdockey = b.flngdockey
+and b.record_active_flag = 'Y'
+and b.record_deleted_flag = 'N'
+
+
+/* --companies */
+UNION 
+select distinct
+a.flngdockey as doc_key,
+round(coalesce(a.fcurtotalincome,0),0) as gross_income,
+round(coalesce(a.fcurotherincome,0),0) as other_income,
+'IR4' as return_type
+
+FROM lab_fcp_raw_restricted_access.app_tblnz_rtnnit a
+
+join prod_raw_restricted_access.app_tbldocsetdoc b
+on a.flngdockey = b.flngdockey
+and b.record_active_flag = 'Y'
+and b.record_deleted_flag = 'N'
+
+
+) a
+
+join prod_raw_restricted_access.app_tbldocsetdoc b
+on a.doc_key = b.flngdockey
+and b.record_active_flag = 'Y'
+and b.record_deleted_flag = 'N'
+
+join prod_raw_restricted_access.app_tblreturn c
+ON b.fi64docsetkey = c.fi64docsetkey
+and b.flngver = c.flngver
+and c.record_active_flag = 'Y'
+and c.record_deleted_flag = 'N'
+
+join prod_raw_restricted_access.app_tblaccount d /*connect to accounts to get customer key!*/
+ON c.flngaccountkey = d.flngaccountkey
+and d.record_active_flag = 'Y'
+and d.record_deleted_flag = 'N'
+
+join lab_property_project.bl_customers_unique e
+on d.flngcustomerkey = e.customer_key
+),
+DSS AS(
+
+/* -- FIRST */
+
+/* -- individuals */
+select 
+e.customer_key,
+e.ird_number,
+left(a.filing_period,4) as filing_period,
+round(coalesce(a.gross_income,0),0),
+round(coalesce(a.other_income,0),0),
+a.return_type
+
+FROM lab_property_project.bl_customers_unique e 
+LEFT JOIN 
+        (
+/*         -- individuals */
+        select distinct
+        ird_number, 
+        taxable_income_109 as gross_income,
+        other_income_827 as other_income,
+        'IR3' as return_type,
+        to_date(return_period_date) as filing_period
+        
+        FROM lab_property_project.dss_returns_keypoints_ir3
+        WHERE return_status = 'A' and record_active_flag = 'Y' 
+        
+        UNION
+/*         -- individuals - non-res */
+        select distinct
+        ird_number, 
+        taxable_income_109 as gross_income,
+        other_income_827 as other_income,
+        'IR3NR' as return_type,
+        to_date(return_period_date) as filing_period
+        
+        FROM lab_property_project.dss_returns_keypoints_ir3nr
+        WHERE return_status = 'A' and record_active_flag = 'Y' 
+        
+/*         -- UNION */
+/*         -- partnership income */
+/*         -- select distinct */
+/*         -- ird_number,  */
+/*         -- total_share_of_income_865 as gross_income, */
+/*         -- other_income_827 as other_income, */
+/*         -- 'IR7P' as return_type, */
+/*         -- to_date(return_period_date) as filing_period */
+/*          */
+/*         -- FROM lab_property_project.dss_returns_attachments_ir20 */
+/*         -- WHERE return_status = 'A' and record_active_flag = 'Y'  */
+        
+/*         -- UNION */
+/*         -- ltc income */
+/*         -- select distinct */
+/*         -- ird_number,  */
+/*         -- total_share_of_income_865 as gross_income, */
+/*         -- other_income_827 as other_income, */
+/*         -- 'IR7P' as return_type, */
+/*         -- to_date(return_period_date) as filing_period */
+/*          */
+/*         -- FROM lab_property_project.dss_returns_attachments_ir7l */
+/*         -- WHERE return_status = 'A' and record_active_flag = 'Y'  */
+        
+  
+        UNION
+/*         -- Partnership income */
+        select distinct
+        ird_number, 
+        taxable_income_109 as gross_income,
+        OTHER_INCOME_LIABLE_100087 as other_income,
+        'IR7' as return_type,
+        to_date(return_period_date) as filing_period
+        
+        FROM lab_property_project.dss_returns_keypoints_ir7
+        
+        UNION
+/*         -- Company income */
+        select distinct
+        ird_number, 
+        calc_tot_taxable_income_100117 as gross_income,
+        other_income_liable_100087 as other_income,
+        'IR4' as return_type,
+        to_date(return_period_date) as filing_period
+        
+        FROM lab_property_project.dss_returns_keypoints_ir4
+        
+        UNION
+/*         -- Trust income */
+        select distinct
+        ird_number, 
+        income_after_expenses_101 as gross_income,
+        other_income_liable_100087 as other_income,
+        'IR6' as return_type,
+        to_date(return_period_date) as filing_period
+        
+        FROM lab_property_project.dss_returns_keypoints_ir6      
+        
+        )a
+ON e.ird_number = a.ird_number
+) 
+
+select  distinct * FROM START
+union
+select distinct * FROM DSS WHERE concat(cast(ird_number as string),filing_period,return_type) not in(select concat(cast(ird_number as string),filing_period,return_type) from START)
+
+) by testdb;
+
+
+    disconnect from testdb;
+quit;
+/*
+  ______ _____ _   _          _         ____  _    _ _______ _____  _    _ _______ _____ 
+ |  ____|_   _| \ | |   /\   | |       / __ \| |  | |__   __|  __ \| |  | |__   __/ ____|
+ | |__    | | |  \| |  /  \  | |      | |  | | |  | |  | |  | |__) | |  | |  | | | (___  
+ |  __|   | | | . ` | / /\ \ | |      | |  | | |  | |  | |  |  ___/| |  | |  | |  \___ \ 
+ | |     _| |_| |\  |/ ____ \| |____  | |__| | |__| |  | |  | |    | |__| |  | |  ____) |
+ |_|    |_____|_| \_/_/    \_\______|  \____/ \____/   |_|  |_|     \____/   |_| |_____/  */
+
+
+proc sql;
+connect to impala as testdb (dsn=cloudera_impala);
+
+execute(drop table IF EXISTS lab_property_project.property_sales purge) by testdb;
+execute
+(CREATE TABLE lab_property_project.property_sales STORED AS PARQUET AS
+
+WITH CUST AS(
+select distinct 
+
+current_timestamp() as run_date,
+concat_ws('-',cast(aa.instr_id as string),aa.title_no) as sale_key,
+aa.instr_id,
+aa.title_no,
+aa.title_sk,
+aa.sale_settlement_date as bl_date,
+aa.owner_start,
+aa.sale_price,
+aa.purchase_price,
+aa.address,
+aa.suburb,
+aa.town,
+aa.postcode,
+aa.area_region,
+aa.land_zone_desc,
+aa.land_use_desc,
+aa.inherited_flag,
+aa.exemption,
+aa.tax_year,
+aa.x_long,
+aa.y_lat,
+
+a.ird_number,
+a.customer_key,
+a.customersegment,
+a.entitytype,
+a.entitytypecode,
+a.entityclass,
+a.le_se,
+a.tax_exemption,
+a.customer_name,
+a.conveyencer,
+a.Agent_Name,
+a.has_enough_gross,
+a.has_other_incomes,
+a.has_loss_other_incomes,
+a.return_filed,
+a.returned_IR833,
+
+CASE WHEN cast(a.tax_year as int) IN (2020) THEN 'NA'
+     WHEN a.customersegment = 'Significant' THEN 'Excl'
+     WHEN a.Entitytypecode IN('LCLATH','PBCATH','SPRFND') THEN 'Excl'
+     WHEN a.LE_SE = 'Y' THEN 'Excl'
+     WHEN a.tax_exemption = 'Y' THEN 'Excl'
+     WHEN a.returned_IR833 IN('Y','?') THEN 'Y'
+     WHEN a.return_filed = 'N' THEN 'N'
+     WHEN a.has_enough_gross = 'Y' THEN 'Y'
+     WHEN a.has_other_incomes = 'Y' THEN 'Y'
+     WHEN a.has_loss_other_incomes='Y' AND a.has_gross_sales = 'Y' THEN 'Y'
+     WHEN a.has_gross_sales = 'Y' and a.is_gst_registered = 'Y' THEN 'Y'
+/*     --  WHEN a.LRWT_AMT_DEDUCTED > 0 THEN 'Y' */
+     ELSE 'Req Review' END AS COMPLIANT_CUSTOMER,
+     
+     CASE WHEN a.developer = 'Y' THEN 'Developer'
+     WHEN a.builder = 'Y' THEN 'Builder'
+     WHEN a.dealer = 'Y' THEN 'Dealer' ELSE 'Brightline'
+     END AS Grouping_CUSTOMER,
+     
+     'Y' as BRIGHTLINE_CRITERIA
+
+FROM lab_property_project.brightline_base_fn aa
+
+LEFT JOIN 
+(
+select distinct
+a.instr_id,
+a.tax_year,
+a.bl_date,
+a.title_sk,
+a.ird_number,
+a.customer_key,
+a.customersegment,
+a.entitytype,
+a.entitytypecode,
+a.entityclass,
+a.le_se,
+a.tax_exemption,
+a.legal_name as customer_name,
+
+
+CASE WHEN a.ANSIC_CODE IN('L671180', 'L671237' ,'E321110','E321120','M692310') THEN 'Y'
+ WHEN a.SHR_DEV_FLAG = 'Y' THEN 'Y'
+ WHEN a.LEGAL_NAME LIKE '%Land%' AND a.LEGAL_NAME LIKE '%Develop%' THEN 'Y'
+ WHEN a.LEGAL_NAME LIKE '%Property%' AND a.LEGAL_NAME LIKE '%Develop%' THEN 'Y'
+ WHEN a.LEGAL_NAME LIKE '%Home%' AND a.LEGAL_NAME LIKE '%Develop%' THEN 'Y'
+ WHEN a.TRADE_NAME LIKE '%Land%' AND a.TRADE_NAME LIKE '%Develop%' THEN 'Y'
+ WHEN a.TRADE_NAME LIKE '%Property%' AND a.TRADE_NAME LIKE '%Develop%' THEN 'Y'
+ WHEN a.TRADE_NAME LIKE '%Home%' AND a.TRADE_NAME LIKE '%Develop%' THEN 'Y'
+ WHEN a.LEGAL_NAME LIKE '%Develop%' AND a.ANSIC_CODE IN('L671160', 'L671170', 'L671180', 'L671210', 'L671233','L671240','L671220','L671230', 'L671250')  THEN 'Y'
+ WHEN a.TRADE_NAME LIKE '%Develop%' AND a.ANSIC_CODE IN('L671160', 'L671170', 'L671180', 'L671210', 'L671233','L671240','L671220','L671230', 'L671250')  THEN 'Y'
+ WHEN a.LEGAL_NAME LIKE '%Development%' THEN 'Y'
+ WHEN a.LEGAL_NAME LIKE '%Development%' THEN 'Y'
+ WHEN g.previous_titles > 1 and d.total_sales < 4  THEN 'Y' 
+ ELSE 'N' END AS DEVELOPER,
+
+CASE WHEN a.ANSIC_CODE IN('L671205','L671210','E302010','L671120','E301910','E301120','E301130','E324220','E329920','E301920') THEN 'Y'
+WHEN a.SHR_BLD_FLAG = 'Y' THEN 'Y'
+ WHEN a.LEGAL_NAME LIKE '%Construction%' THEN 'Y'
+ WHEN a.LEGAL_NAME LIKE '%Building%' THEN 'Y'
+ WHEN a.LEGAL_NAME LIKE '%Builder%' THEN 'Y'
+ WHEN a.TRADE_NAME LIKE '%Construction%' THEN 'Y'
+ WHEN a.TRADE_NAME LIKE '%Building%' THEN 'Y'
+ WHEN a.TRADE_NAME LIKE '%Builder%' THEN 'Y'
+ ELSE 'N' END AS BUILDER,
+CASE WHEN d.total_sales > 3 THEN 'Y' ELSE 'N' END AS DEALER,
+CASE WHEN e.customer_key IS NOT NULL THEN 'Y' ELSE 'N' END AS IS_GST_REGISTERED, /*at time of sale)*/ 
+a.certifier_firm as conveyencer,
+f.Agent_Name,
+
+CASE WHEN h.gross_sales > 0 THEN 'Y' ELSE 'N' END AS HAS_GROSS_SALES,
+case when ((i.num_sale_prices_est / i.num_sale_trans) * 100) > 0.5 then '?'
+ when h.gross_sales > (case when e.customer_key IS NOT NULL then i.expected_gross / 1.15  else i.expected_gross  end * 0.85) /* 2019-10-03 discussion with CS 20% discount mooted, 15% trialed */
+ then 'Y'
+else 'N' end as has_enough_gross,
+
+case when j.other_income > 0 THEN 'Y' ELSE 'N' END AS has_other_incomes,
+case when j.other_income < 0 THEN 'Y' ELSE 'N' END AS has_loss_other_incomes,
+CASE WHEN j.ird_number IS NOT NULL THEN 'Y' ELSE 'N' END AS return_filed,
+CASE WHEN k.returned_IR833 IS NOT NULL THEN k.returned_IR833 ELSE 'N' end as returned_IR833
+/* -- f.LRWT_AMT_DEDUCTED, */
+ 
+
+
+FROM lab_property_project.BL_CUSTOMER_DETAILS a
+
+
+LEFT JOIN
+(
+select 
+a.ird_number,
+count(b.ird_number) as total_sales
+
+FROM lab_property_project.BL_CUSTOMERS_UNIQUE a
+JOIN (
+
+SELECT 
+a.ird_number,
+/* -- a.transferor_or_transferee */
+to_date(MAX(b.period_end)) as latest_sale
+FROM lab_property_project.pty_pd_tax_stmt a
+JOIN lab_property_project.pty_pd_title_ownership_period b
+ON a.instr_id = b.next_instr_id
+JOIN lab_property_project.pty_pd_title_ownership_period bb
+ON b.next_instr_id = bb.instr_id
+WHERE a.transferor_or_transferee = 'TTOR'
+AND bb.event_type_sk = 3
+
+GROUP BY ird_number
+) b
+ON a.ird_number = b.ird_number
+AND datediff(a.BL_DATE, b.latest_sale) < 1825
+
+GROUP BY 
+a.ird_number
+) d
+on a.ird_number = d.ird_number
+
+/* -- gst registrations */
+LEFT JOIN
+(
+select distinct  a.customer_key,
+cast(a.tax_year as int) as tax_year
+/* -- CAST(LEFT(to_date(b.fdtmcommence),4) as int) as gst_reg, */
+/* -- CAST(LEFT(to_date(b.fdtmcease),4) as int) as gst_cease, */
+/* -- a.bl_date, */
+/* -- b.fdtmcommence, */
+/* -- b.fdtmcease */
+FROM lab_property_project.BL_CUSTOMERS_UNIQUE a
+JOIN prod_raw_restricted_access.app_tblaccount b
+ON a.customer_key = b.flngcustomerkey
+AND b.fstraccounttype = 'GST'
+AND b.record_active_flag = 'Y' 
+AND b.record_deleted_flag = 'N'
+AND to_date(b.fdtmcommence) <= a.bl_date
+AND to_date(b.fdtmcease) > a.bl_date
+/* -- AND CAST(LEFT(to_date(b.fdtmcommence),4) as int) <= cast(a.tax_year as int) */
+/* -- AND CAST(LEFT(to_date(b.fdtmcease),4) as int) > cast(a.tax_year as int) */
+
+order by a.customer_key
+)e
+
+ON a.customer_key = e.customer_key
+and cast(a.tax_year as int) = e.tax_year
+
+
+/*Tax agents*/
+LEFT JOIN 
+(
+select a.customer_key,
+a.instr_id,
+a.title_sk,
+TRIM(concat_ws(' ',TRIM(initcap(coalesce(c.fstrFirstName,''))),TRIM(initcap(coalesce(c.fstrMiddleName,''))), TRIM(initcap(coalesce(c.fstrFamilyName,''))))) as Agent_Name,
+/* -- a.bl_date, */
+/* -- b.fdtmcommence, */
+/* -- b.fdtmcease, */
+/* -- CAST(LEFT(to_date(add_months(b.fdtmcommence,9)),4) as int) as f_year_agent, */
+/* -- a.tax_year, */
+DENSE_RANK() OVER (PARTITION BY a.instr_id, a.title_sk, a.customer_key ORDER BY b.fdtmcommence desc) as row_n/*customers have multiple agents, take the latest one*/
+
+FROM lab_property_project.BL_CUSTOMERS_UNIQUE a
+
+JOIN prod_raw_restricted_access.app_tblaccount aa
+ON a.customer_key = aa.flngcustomerkey
+and aa.record_active_flag = 'Y'
+and aa.record_deleted_flag = 'N'
+AND aa.fstraccounttype IN ('IIT', 'ITN')
+
+JOIN prod_raw_restricted_access.app_tbllink b
+ON a.customer_key = b.flngtocustomerkey
+AND b.flngtoaccountkey = aa.flngaccountkey
+AND b.finttoprofilenumber = aa.fintprofilenumber
+
+AND b.record_active_flag = 'Y' 
+AND b.record_deleted_flag = 'N'
+/* -- AND b.fdtmcease = '9999-12-31 00:00:00'/*NULL */
+/* -- AND LEFT(to_date(b.fdtmcease),4) = '9999'/*NULL */
+/* -- AND cast(left(to_date(b.fdtmcommence),4) as int) <= cast(a.tax_year as int) */
+/* -- AND b.fdtmcommence <= a.bl_date */
+/* -- AND b.fdtmcease > b.fdtmcommence */
+/* -- AND CAST(LEFT(to_date(add_months(b.fdtmcommence,9)),4) as int) <= cast(a.tax_year as int) */
+AND to_date(b.fdtmcease) > a.bl_date /*not if agent ceased before sale*/
+AND b.fstrLINKTYPE = 'TAXAGT'
+-- Need to get more sophisticated logic to get current agent at time of sale(or agent registered during tax year that sale was made) will need to join to FIRST agent tables to get this
+
+
+JOIN  prod_raw_restricted_access.app_tblcustomerinfo c
+ON b.flngfromcustomerkey = c.flngcustomerkey
+AND c.fintprofilenumber = 1
+AND c.record_active_flag = 'Y' 
+AND c.record_deleted_flag = 'N'
+AND c.fstrnametype = 'LGL'
+
+
+ORDER BY a.customer_key
+
+)f
+ON a.customer_key = f.customer_key
+AND a.instr_id = f.instr_id
+and a.title_sk = f.title_sk
+AND f.row_n = 1
+
+/* -- number of previous titles from title lookback(subdiving) */
+LEFT JOIN
+(
+select a.ird_number,
+max(b.previous_titles) as previous_titles
+FROM  lab_property_project.BL_CUSTOMERS_UNIQUE a
+JOIN lab_property_project.BRIGHTLINE_BASE_fn b
+ON a.instr_id = b.instr_id
+AND a.title_sk = b.title_sk
+group by  a.ird_number
+) g
+on a.ird_number = g.ird_number
+
+
+LEFT JOIN lab_property_project.ir10_financials h
+ON a.ird_number = h.ird_number
+and a.tax_year = h.filing_period
+
+
+LEFT JOIN (
+select instr_id,
+title_sk,
+round( sum(adj_share_of_gross), 2) as expected_gross,
+sum(case when price_estimated = 'Y' then 1 else 0 end) as num_sale_prices_est,
+count(instr_id) as num_sale_trans
+FROM lab_property_project.bl_liable_sales_me
+GROUP BY
+instr_id,
+title_sk
+)i
+ON a.instr_id = i.instr_id
+AND a.title_sk = i.title_sk
+
+LEFT JOIN lab_property_project.sellers_all_returns j
+ON a.ird_number = j.ird_number
+AND a.tax_year = j.filing_period
+
+LEFT JOIN lab_property_project.pty_ir833 k
+ON a.ird_number = k.ird_number
+AND a.tax_year = k.tax_year
+)a
+
+ON a.instr_id = aa.instr_id
+and a.title_sk = aa.title_sk
+)
+/* ------------------------------------------- */
+
+
+select distinct a.*,
+b.grouping_sale,
+b.compliant_sale
+
+FROM CUST a
+
+/* determin groupings and customer for sale itself */
+LEFT JOIN
+(
+    select distinct
+    concat_ws('-',cast(a.instr_id as string),a.title_no) as sale_key,
+    CASE  
+     WHEN a.exemption IS NOT NULL THEN 'Exemption' 
+     WHEN c.developer = 'Y' THEN 'Developer'
+     WHEN d.builder = 'Y' THEN 'Builder'
+     WHEN e.dealer = 'Y' THEN 'Dealer'
+     ELSE 'Brightline' END AS Grouping_Sale,
+    
+     CASE WHEN a.exemption IS NOT NULL THEN 'Excl'
+          WHEN j.instr_id IS NOT NULL THEN 'Y'
+          WHEN k.instr_id IS NOT NULL THEN 'Excl'
+    	  WHEN l.instr_id IS NOT NULL THEN 'Req Review'
+    	  WHEN m.instr_id IS NOT NULL THEN 'NA'
+    	  ELSE 'N' END AS COMPLIANT_Sale
+    FROM CUST a
+    /*developers*/
+    LEFT JOIN
+    (
+    select distinct 
+    instr_id,
+    title_sk,
+    'Y' as developer
+    FROM CUST
+    WHERE grouping_customer = 'Developer'
+    )
+    c
+    ON a.instr_id = c.instr_id
+    AND a.title_sk = c.title_sk
+    
+    /*builders*/
+    LEFT JOIN
+    (
+    select distinct 
+    instr_id,
+    title_sk,
+    'Y' as builder
+    FROM CUST
+    WHERE grouping_customer = 'Builder'
+    )
+    d
+    ON a.instr_id = d.instr_id
+    AND a.title_sk = d.title_sk
+    
+    /*dealers*/
+    LEFT JOIN
+    (
+    select distinct 
+    instr_id,
+    title_sk,
+    'Y' as dealer
+    FROM CUST
+    WHERE grouping_customer = 'Dealer'
+    )
+    e
+    ON a.instr_id = e.instr_id
+    AND a.title_sk = e.title_sk
+    
+/*     -- compliant sales */
+    LEFT JOIN
+    (select distinct
+    instr_id,
+    title_sk
+    FROM CUST
+    WHERE COMPLIANT_customer = 'Y'
+    ) j
+    ON a.instr_id = j.instr_id
+    AND a.title_sk = j.title_sk
+    
+    LEFT JOIN
+    (select distinct
+    instr_id,
+    title_sk
+    FROM CUST
+    WHERE COMPLIANT_customer = 'Excl'
+    ) k
+    ON a.instr_id = k.instr_id
+    AND a.title_sk = k.title_sk
+    
+    LEFT JOIN
+    (select distinct
+    instr_id,
+    title_sk
+    FROM CUST
+    WHERE COMPLIANT_customer = 'Req Review'
+    ) l
+    ON a.instr_id = l.instr_id
+    AND a.title_sk = l.title_sk
+    
+    LEFT JOIN
+    (select distinct
+    instr_id,
+    title_sk
+    FROM CUST
+    WHERE COMPLIANT_customer = 'NA'
+    ) m
+    ON a.instr_id = m.instr_id
+    AND a.title_sk = m.title_sk	  
+	  
+)b
+
+ON a.sale_key = b.sale_key
+) by testdb;
+disconnect from testdb;
+
+quit;      
+
+
+/* Update final table into SAS and loading into memory */
+proc delete data = prop.property_sales;
+run;
+
+proc casutil;
+load incaslib="lab_hive_ep_project_property" casdata = "property_sales"
+outcaslib= "lab_hive_ep_project_property" casout = "property_sales";
+run;
+
+
+proc delete data = prop.property_sales_all;
+run;
+
+/* formatting dates */
+data prop.property_sales_all(drop = bl_date run_date owner_start title_sk) ;
+set prop.property_sales;
+
+OwnerBegin = datepart(owner_start);
+format OwnerBegin date9.;
+
+BrightlineDate = datepart(bl_date);
+format BrightlineDate date9.;
+
+BrightlineMonth = datepart(bl_date);
+format BrightlineMonth  monyy5.;
+
+RunDate = datepart(run_date);
+format RunDate date9.;
+
+run;
+
+
+/* Dashboard table */
+proc casutil;
+	PROMOTE casdata="property_sales_all" incaslib="lab_hive_ep_project_property"
+outcaslib="lab_hive_ep_project_property"	casout="property_sales_all" ;    
+run;
+
+cas mysession terminate;
